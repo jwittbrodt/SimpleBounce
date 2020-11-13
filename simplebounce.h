@@ -13,20 +13,20 @@ class Scalarfield {
     double *phi_, *rinv_, *r_dminusoneth_;
 
   public:
-    Scalarfield(const int nphi_, const int n_, const int rmax_, const int dim_);
+    Scalarfield(const int nphi, const int n, const double rmax, const int dim);
     ~Scalarfield();
     double phi(const int i, const int iphi) const;
-    void setPhi(const int i, const int iphi, const double phi_);
-    void addToPhi(const int i, const int iphi, const double phi_);
+    void setPhi(const int i, const int iphi, const double phi);
+    void addToPhi(const int i, const int iphi, const double phi);
     double *phivec(const int i) const;
     double r(const int i) const;
     double lap(const int i, const int iphi) const;
     void updateInfo();
 
-    void setRmax(const double rmax_);
-    void setDimension(const int dim_);
-    void setN(const int n_);
-    void setNphi(const int nphi_);
+    void setRmax(const double rmax);
+    void setDimension(const int dim);
+    void setN(const int n);
+    void setNphi(const int nphi);
 
     int n() const;
     int nphi() const;
@@ -42,7 +42,7 @@ class GenericModel {
     int nphi_;
 
   public:
-    void setNphi(const int nphi__);
+    void setNphi(const int nphi);
     int nphi() const;
     virtual double vpot(const double *phi) const = 0;
     virtual void calcDvdphi(const double *phi, double *dvdphi) const = 0;
@@ -84,7 +84,7 @@ class BounceCalculator : public Scalarfield {
     double action() const;
     double oneIfBounce() const;
     double rBounce(const int i) const;
-    int setVacuum(const double *phiTV_, const double *phiFV_);
+    int setVacuum(const double *phiTV, const double *phiFV);
     void setInitial(const double frac, const double width);
     double fieldExcursion() const;
     double derivativeAtBoundary() const;

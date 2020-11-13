@@ -19,17 +19,13 @@ double integral(const double *integrand, const double dr, const int n) {
  * scalar field(s) with O(d) symmetry in d-dimensional Euclidean space
  */
 
-Scalarfield::Scalarfield(const int nphi__, const int n__, const int rmax__,
-                         const int dim__) {
-    n_ = n__;
-    nphi_ = nphi__;
-    rmax_ = rmax__;
-    dim_ = dim__;
-    dr_ = rmax__ / (n__ - 1.);
-    drinv_ = 1. / dr_;
-    phi_ = new double[n__ * nphi__];
-    rinv_ = new double[n__];
-    r_dminusoneth_ = new double[n__];
+Scalarfield::Scalarfield(const int nphi, const int n, const double rmax,
+                         const int dim)
+    : n_{n}, nphi_{nphi}, dim_{dim}, rmax_{rmax}, dr_{rmax_ / (n_ - 1)},
+      drinv_{1 / dr_} {
+    phi_ = new double[n_ * nphi_];
+    rinv_ = new double[n_];
+    r_dminusoneth_ = new double[n_];
     updateInfo();
 }
 
@@ -44,14 +40,14 @@ double Scalarfield::phi(const int i, const int iphi) const {
     return phi_[i * nphi_ + iphi];
 }
 
-// set the value of scalar field phi_iphi to phi__
-void Scalarfield::setPhi(const int i, const int iphi, const double phi__) {
-    phi_[i * nphi_ + iphi] = phi__;
+// set the value of scalar field phi_iphi to phi
+void Scalarfield::setPhi(const int i, const int iphi, const double phi) {
+    phi_[i * nphi_ + iphi] = phi;
 }
 
-// add phi__ to the value of scalar field phi_iphi
-void Scalarfield::addToPhi(const int i, const int iphi, const double phi__) {
-    phi_[i * nphi_ + iphi] += phi__;
+// add phi to the value of scalar field phi_iphi
+void Scalarfield::addToPhi(const int i, const int iphi, const double phi) {
+    phi_[i * nphi_ + iphi] += phi;
 }
 
 // return the address of phi_0 at r_i.
@@ -86,9 +82,9 @@ void Scalarfield::updateInfo() {
 }
 
 // set the radius at the boundary
-void Scalarfield::setRmax(const double rmax__) {
-    if (rmax__ > 0.) {
-        rmax_ = rmax__;
+void Scalarfield::setRmax(const double rmax) {
+    if (rmax > 0.) {
+        rmax_ = rmax;
     } else {
         std::cerr << "!!! rmax should be positive value !!!" << std::endl;
         std::cerr << "!!! rmax is set to 1. !!!" << std::endl;
@@ -100,28 +96,28 @@ void Scalarfield::setRmax(const double rmax__) {
 }
 
 // set the dimension of the Euclidean space
-void Scalarfield::setDimension(const int dim__) {
-    dim_ = dim__;
+void Scalarfield::setDimension(const int dim) {
+    dim_ = dim;
     updateInfo();
 }
 
 // set the number of grid. grid spacing dr is consistently changed.
-void Scalarfield::setN(const int n__) {
-    n_ = n__;
-    dr_ = rmax_ / (n__ - 1.);
+void Scalarfield::setN(const int n) {
+    n_ = n;
+    dr_ = rmax_ / (n - 1.);
     drinv_ = 1. / dr_;
     delete[] phi_;
     delete[] rinv_;
     delete[] r_dminusoneth_;
-    phi_ = new double[n__ * nphi_];
-    rinv_ = new double[n__];
-    r_dminusoneth_ = new double[n__];
+    phi_ = new double[n * nphi_];
+    rinv_ = new double[n];
+    r_dminusoneth_ = new double[n];
     updateInfo();
 }
 
 // set the number of scalar field(s)
-void Scalarfield::setNphi(const int nphi__) {
-    nphi_ = nphi__;
+void Scalarfield::setNphi(const int nphi) {
+    nphi_ = nphi;
     delete[] phi_;
     phi_ = new double[n_ * nphi_];
 }
@@ -169,7 +165,7 @@ double Scalarfield::r_dminusoneth(const int i) const {
  */
 
 // set the number of the scalar field(s)
-void GenericModel::setNphi(const int nphi__) { nphi_ = nphi__; }
+void GenericModel::setNphi(const int nphi) { nphi_ = nphi; }
 
 // return the number of scalar field(s)
 int GenericModel::nphi() const { return nphi_; }
