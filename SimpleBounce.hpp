@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -20,109 +21,23 @@ double trapezoidalIntegrate(It beginValues, It endValues, double stepSize) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-template <std::size_t nPhi> class Scalarfield {
-  private:
-    int n_, dim_;
-    double rmax_, dr_, drinv_;
-
-    std::vector<std::array<double, nPhi>> phi_;
-    std::vector<double> rinv_, r_dminusoneth_;
-
-    void updateInfo() {
-        for (int i = 1; i < n(); i++) {
-            rinv_[i] = 1. / (dr_ * i);
-            r_dminusoneth_[i] = std::pow(dr_ * i, dim_ - 1);
-        }
-    }
-
+template <std::size_t nPhi> class GenericModel {
   public:
-    Scalarfield(int n, double rmax, int dim)
-        : n_{n}, dim_{dim}, rmax_{rmax}, dr_{rmax_ / (n_ - 1)}, drinv_{1 / dr_},
-          phi_(n), rinv_(n_), r_dminusoneth_(n_) {
-        updateInfo();
-    }
-
-    double phi(int i, int iphi) const { return phi_[i][iphi]; }
-
-    double &phi(int i, int iphi) { return phi_[i][iphi]; }
-
-    const std::array<double, nPhi> &phiVec(int i) const { return phi_[i]; }
-
-    double lap(int i, int iphi) const {
-        if (i == 0) {
-            return 2. * (phi(1, iphi) - phi(0, iphi)) * drinv_ * drinv_ * dim_;
-        } else {
-            return (phi(i + 1, iphi) - 2. * phi(i, iphi) + phi(i - 1, iphi)) *
-                       drinv_ * drinv_ +
-                   (phi(i + 1, iphi) - phi(i - 1, iphi)) * 0.5 * drinv_ *
-                       (dim_ - 1.) * rinv_[i];
-        }
-    }
-
-    void setRmax(double rmax) {
-        if (rmax > 0.) {
-            rmax_ = rmax;
-        } else {
-            std::cerr << "!!! rmax should be positive value !!!" << std::endl;
-            std::cerr << "!!! rmax is set to 1. !!!" << std::endl;
-            rmax_ = 1.;
-        }
-        dr_ = rmax_ / (n_ - 1.);
-        drinv_ = 1. / dr_;
-        updateInfo();
-    }
-
-    void setDimension(int dim) {
-        dim_ = dim;
-        updateInfo();
-    }
-
-    void setN(int n) {
-        n_ = n;
-        dr_ = rmax_ / (n - 1.);
-        drinv_ = 1. / dr_;
-        phi_.resize(n_);
-        rinv_.resize(n_);
-        r_dminusoneth_.resize(n_);
-        updateInfo();
-    }
-
-    int n() const { return n_; }
-    int dim() const { return dim_; }
-    double rmax() const { return rmax_; }
-    double dr() const { return dr_; }
-    double r_dminusoneth(const int i) const { return r_dminusoneth_[i]; }
-};
-
-template <std::size_t nphi, class VFunc, class DVFunc> class GenericModel {
-    VFunc vFunc_;
-    DVFunc dvFunc_;
-
-  public:
-    static constexpr std::size_t nPhi = nphi;
-
-    GenericModel(VFunc vFunc, DVFunc dvFunc)
-        : vFunc_{std::move(vFunc)}, dvFunc_{std::move(dvFunc)} {}
-
-    double vPot(const std::array<double, nPhi> &phi) const {
-        return vFunc_(phi);
-    }
-    std::array<double, nPhi>
-    calcDvPot(const std::array<double, nPhi> &phi) const {
-        return dvFunc_(phi);
-    }
+    virtual double vpot(const double *phi) const = 0;
+    virtual void calcDvdphi(const double *phi, double *dvdphi) const = 0;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-template <class Model> class BounceCalculator {
+template <std::size_t nPhi> class BounceCalculator {
   private:
-    const Model &model_;
-
-    Scalarfield<Model::nPhi> field_;
+    std::size_t n_, dim_;
+    double rmax_, dr_, drinv_;
+    double *phi_;
+    std::vector<double> r_dminusoneth_ = {};
 
     double lambda;
-    std::array<double, Model::nPhi> phiTV_;
-    std::array<double, Model::nPhi> phiFV_;
+
+    GenericModel<nPhi> *model_;
     bool setVacuumDone;
     double VFV;
     bool verbose;
@@ -135,12 +50,95 @@ template <class Model> class BounceCalculator {
     double derivMax;
     double tend0;
     double tend1;
-    int maxN;
+    std::size_t maxN;
+
+    // radius : r_i = i * dr
+    double r(int i) const { return dr_ * i; }
+
+    // calculate and save pow(r(i), dim-1)
+    void updateInfo() {
+        r_dminusoneth_.resize(n_);
+        for (int i = 0; i < n(); i++) {
+            r_dminusoneth_[i] = pow(r(i), dim_ - 1);
+        }
+    }
 
   public:
-    static constexpr std::size_t nPhi = Model::nPhi;
+    // return the value of scalar field phi_iphi at r_i
+    double phi(const int i, const int iphi) const {
+        return phi_[i * nPhi + iphi];
+    }
 
-    BounceCalculator(const Model &model) : field_{100, 1., 4}, model_{model} {
+    // set the value of scalar field phi_iphi to phi
+    void setPhi(const int i, const int iphi, const double phi) {
+        phi_[i * nPhi + iphi] = phi;
+    }
+
+    // add phi to the value of scalar field phi_iphi
+    void addToPhi(const int i, const int iphi, const double phi) {
+        phi_[i * nPhi + iphi] += phi;
+    }
+
+    // return the address of phi_0 at r_i.
+    // phi_0, phi_1, phi_2, ... can be obtained by x[0], x[1], x[2], ... after x
+    // = phivec(i)
+    double *phivec(const int i) const { return &phi_[i * nPhi + 0]; }
+
+    // Laplacian in radial coordinate : \nabla^2 \phi = d^2 phi / dr^2 + (d-1)/r
+    // * dphi/dr note that rinv_[i] = 1/r(i). See Eq. 9 in the manual
+    double lap(const int i, const int iphi) const {
+        if (i == 0) {
+            return 2. * (phi(1, iphi) - phi(0, iphi)) * drinv_ * drinv_ * dim_;
+        } else {
+            return (phi(i + 1, iphi) - 2. * phi(i, iphi) + phi(i - 1, iphi)) *
+                       drinv_ * drinv_ +
+                   (phi(i + 1, iphi) - phi(i - 1, iphi)) * 0.5 * drinv_ *
+                       (dim_ - 1.) / r(i);
+        }
+    }
+
+    // set the dimension of the Euclidean space
+    void setDimension(const int dim) {
+        dim_ = dim;
+        updateInfo();
+    }
+
+    // set the number of grid. grid spacing dr is consistently changed.
+    void setN(const int n) {
+        n_ = n;
+        dr_ = rmax_ / (n - 1.);
+        drinv_ = 1. / dr_;
+        delete[] phi_;
+        phi_ = new double[n * nPhi];
+        updateInfo();
+    }
+
+    // return the number of the grid
+    int n() const { return n_; }
+
+    // return the number of the scalar field(s)
+    int nphi() const { return nPhi; }
+
+    // return the dimension of space
+    int dim() const { return dim_; }
+
+    // return the radius at the boundary
+    double rmax() const { return rmax_; }
+
+    // return the lattice spacing
+    double dr() const { return dr_; }
+
+    // return pow(r(i), dim-1)
+    double r_dminusoneth(const int i) const { return r_dminusoneth_[i]; }
+
+    BounceCalculator(GenericModel<nPhi> *model, std::size_t n = 100,
+                     std::size_t dim = 4)
+        : n_{n}, dim_{dim}, rmax_{1.}, dr_{rmax_ / (n_ - 1)}, drinv_{1 / dr_},
+          phi_{new double[n_ * nPhi]}, model_{model} {
+        r_dminusoneth_.reserve(n_);
+        for (int i = 0; i < n_; i++) {
+            r_dminusoneth_.emplace_back(std::pow(r(i), dim_ - 1));
+        }
 
         // flags
         setVacuumDone = false;
@@ -157,76 +155,81 @@ template <class Model> class BounceCalculator {
         maxN = 1000;
     }
 
+    ~BounceCalculator() { delete[] phi_; }
+
+    // kinetic energy of the configuration
+    // \int_0^\infty dr r^{d-1} \sum_i (-1/2) \phi_i \nabla^2\phi_i
     double t() const {
-        std::vector<double> integrand(field_.n() - 1);
-        for (int i = 0; i < field_.n() - 1; i++) {
+        std::vector<double> integrand(n() - 1);
+        for (int i = 0; i < n() - 1; i++) {
             integrand[i] = 0.;
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                integrand[i] += field_.r_dminusoneth(i) * -0.5 *
-                                field_.phi(i, iphi) * field_.lap(i, iphi);
+            for (int iphi = 0; iphi < nphi(); iphi++) {
+                integrand[i] -=
+                    r_dminusoneth(i) * phi(i, iphi) * lap(i, iphi) / 2.;
             }
         }
-        return trapezoidalIntegrate(integrand.begin(), integrand.end(),
-                                    field_.dr());
+        return trapezoidalIntegrate(integrand.begin(), integrand.end(), dr());
     }
 
+    // potential energy of the configuration
+    // \int_0^\infty dr r^{d-1} V(\phi)
     double v() const {
-        std::vector<double> integrand(field_.n());
-        for (int i = 0; i < field_.n(); i++) {
-            integrand[i] =
-                field_.r_dminusoneth(i) * (model_.vPot(field_.phiVec(i)) - VFV);
+        std::vector<double> integrand(n());
+        for (int i = 0; i < n(); i++) {
+            integrand[i] = r_dminusoneth(i) * (model_->vpot(phivec(i)) - VFV);
         }
-        return trapezoidalIntegrate(integrand.begin(), integrand.end(),
-                                    field_.dr());
+        return trapezoidalIntegrate(integrand.begin(), integrand.end(), dr());
     }
 
-    double evolve(double dtau) {
+    // evolve the configuration by dtau
+    double evolve(const double dtau) {
 
-        std::vector<std::array<double, nPhi>> laplacian(field_.n());
+        double laplacian[n()][nphi()];
+
         // \nabla^2 \phi_iphi at r = r_i
-        for (int i = 0; i < field_.n() - 1; i++) {
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                laplacian[i][iphi] = field_.lap(i, iphi);
+        for (int i = 0; i < n() - 1; i++) {
+            for (int iphi = 0; iphi < nphi(); iphi++) {
+                laplacian[i][iphi] = lap(i, iphi);
             }
         }
 
         // integral1 : \int_0^\infty dr r^{d-1} \sum_i (\partial V /
         // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr r^{d-1}
         // \sum_i (\partial V / \partial\phi_i)^2
-        std::vector<double> integrand1(field_.n()), integrand2(field_.n());
-        for (int i = 0; i < field_.n() - 1; i++) {
+        double integrand1[n()], integrand2[n()];
+        for (int i = 0; i < n() - 1; i++) {
             integrand1[i] = 0.;
             integrand2[i] = 0.;
-            auto dvdphi = model_.calcDvPot(field_.phiVec(i));
-            for (int iphi = 0; iphi < nPhi; iphi++) {
+            double dvdphi[nphi()];
+            model_->calcDvdphi(phivec(i), dvdphi);
+            for (int iphi = 0; iphi < nphi(); iphi++) {
                 integrand1[i] +=
-                    field_.r_dminusoneth(i) * dvdphi[iphi] * laplacian[i][iphi];
-                integrand2[i] +=
-                    field_.r_dminusoneth(i) * dvdphi[iphi] * dvdphi[iphi];
+                    r_dminusoneth(i) * dvdphi[iphi] * laplacian[i][iphi];
+                integrand2[i] += r_dminusoneth(i) * dvdphi[iphi] * dvdphi[iphi];
             }
         }
-        integrand1[field_.n() - 1] = 0.;
-        integrand2[field_.n() - 1] = 0.;
+        integrand1[n() - 1] = 0.;
+        integrand2[n() - 1] = 0.;
 
         // Eq. 9 of 1907.02417
-        lambda = trapezoidalIntegrate(integrand1.begin(), integrand1.end(),
-                                      field_.dr()) /
-                 trapezoidalIntegrate(integrand2.begin(), integrand2.end(),
-                                      field_.dr());
+        lambda =
+            trapezoidalIntegrate(&integrand1[0], &integrand1[0] + n(), dr()) /
+            trapezoidalIntegrate(&integrand2[0], &integrand2[0] + n(), dr());
 
         // RHS of Eq. 8 of 1907.02417
         // phi at boundary is fixed to phiFV and will not be updated.
-        std::vector<std::array<double, nPhi>> RHS(field_.n());
-        for (int i = 0; i < field_.n() - 1; i++) {
-            auto dvdphi = model_.calcDvPot(field_.phiVec(i));
-            for (int iphi = 0; iphi < nPhi; iphi++) {
+        double RHS[n()][nphi()];
+        for (int i = 0; i < n() - 1; i++) {
+            double dvdphi[nphi()];
+            model_->calcDvdphi(phivec(i), dvdphi);
+            for (int iphi = 0; iphi < nphi(); iphi++) {
                 RHS[i][iphi] = laplacian[i][iphi] - lambda * dvdphi[iphi];
             }
         }
 
         // if RHS of EOM at the origin is too big, smaller step is taken.
         double sum = 0.;
-        for (int iphi = 0; iphi < nPhi; iphi++) {
+        for (int iphi = 0; iphi < nphi(); iphi++) {
             sum += RHS[0][iphi] * RHS[0][iphi];
         }
         double dtautilde = maximumvariation * fieldExcursion() / sqrt(sum);
@@ -236,84 +239,72 @@ template <class Model> class BounceCalculator {
 
         // flow by Eq. 8 of 1907.02417
         // phi at boundary is fixed to phiFV and will not be updated.
-        for (int i = 0; i < field_.n() - 1; i++) {
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                field_.phi(i, iphi) += dtautilde * RHS[i][iphi];
+        for (int i = 0; i < n() - 1; i++) {
+            for (int iphi = 0; iphi < nphi(); iphi++) {
+                addToPhi(i, iphi, dtautilde * RHS[i][iphi]);
             }
         }
 
         return lambda;
     }
 
+    // RHS of Eq. 8 of 1907.02417
+    double residual(const int i, const int iphi) const {
+        double dvdphi[nphi()];
+        model_->calcDvdphi(phivec(i), dvdphi);
+        return lap(i, iphi) - lambda * dvdphi[iphi];
+    }
+
+    // RHS of EOM for the bounce solution at r = sqrt(lambda) * r_i
+    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
+    double residualBounce(const int i, const int iphi) const {
+        double dvdphi[nphi()];
+        model_->calcDvdphi(phivec(i), dvdphi);
+        return lap(i, iphi) / lambda - dvdphi[iphi];
+    }
+
+    // Kinetic energy of the bounce
+    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
     double tBounce() const {
-        double area = field_.dim() * pow(M_PI, field_.dim() / 2.) /
-                      tgamma(field_.dim() / 2. + 1.);
-        return area * pow(lambda, field_.dim() / 2. - 1.) * t();
+        double area = dim() * pow(M_PI, dim() / 2.) / tgamma(dim() / 2. + 1.);
+        return area * pow(lambda, dim() / 2. - 1.) * t();
     }
 
+    // Potential energy of the bounce
+    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
     double vBounce() const {
-        double area = field_.dim() * pow(M_PI, field_.dim() / 2.) /
-                      tgamma(field_.dim() / 2. + 1.);
-        return area * pow(lambda, field_.dim() / 2.) * v();
+        double area = dim() * pow(M_PI, dim() / 2.) / tgamma(dim() / 2. + 1.);
+        return area * pow(lambda, dim() / 2.) * v();
     }
 
+    // Euclidean action in d-dimensional space
+    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
     double action() const { return tBounce() + vBounce(); }
 
+    // this value should be one for the bounce solution
     double oneIfBounce() const {
-        return (2. - field_.dim()) / field_.dim() * tBounce() / vBounce();
+        return (2. - dim()) / dim() * tBounce() / vBounce();
     }
 
-    double rBounce(int i) const { return sqrt(lambda) * field_.dr() * i; }
+    // boucne solution from scale transformation
+    double rBounce(const int i) const { return sqrt(lambda) * dr() * i; }
 
-    int setVacuum(const std::array<double, nPhi> &phiTV,
-                  const std::array<double, nPhi> &phiFV) {
-        if (model_.vPot(phiTV) > model_.vPot(phiFV)) {
-            std::cerr
-                << "!!! energy of true vacuum is larger than false vacuum !!!"
-                << std::endl;
-            return -1;
-        }
-        std::copy(phiTV.begin(), phiTV.end(), phiTV_.begin());
-        std::copy(phiFV.begin(), phiFV.end(), phiFV_.begin());
-
-        if (verbose) {
-            std::cerr << "true and false vacua have been set." << std::endl;
-
-            std::cerr << "\tfalse vacuum : ";
-            std::cerr << "(";
-            for (int iphi = 0; iphi < nPhi - 1; iphi++) {
-                std::cerr << phiFV[iphi] << ", ";
-            }
-            std::cerr << phiFV[nPhi - 1] << ")\t";
-            std::cerr << "V = " << model_.vPot(phiFV) << std::endl;
-
-            std::cerr << "\ta point with smaller V : ";
-            std::cerr << "(";
-            for (int iphi = 0; iphi < nPhi - 1; iphi++) {
-                std::cerr << phiTV[iphi] << ", ";
-            }
-            std::cerr << phiTV[nPhi - 1] << ")\t";
-            std::cerr << "V = " << model_.vPot(phiTV) << std::endl;
-        }
-
-        VFV = model_.vPot(phiFV);
-        setVacuumDone = true;
-
-        return 0;
-    }
-
-    void setInitial(double frac, double width) {
-        for (int i = 0; i < field_.n() - 1; i++) {
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                field_.phi(i, iphi) =
-                    phiTV_[iphi] + (phiFV_[iphi] - phiTV_[iphi]) *
-                                       (1. + tanh((i - field_.n() * frac) /
-                                                  (field_.n() * width))) /
-                                       2.;
+    // set the initial configuration
+    // See Eq. 11 in the manual.
+    void setInitial(const double frac, const double width,
+                    const std::array<double, nPhi> &phiFV,
+                    const std::array<double, nPhi> &phiTV) {
+        for (int i = 0; i < n() - 1; i++) {
+            for (int iphi = 0; iphi < nphi(); iphi++) {
+                setPhi(i, iphi,
+                       phiTV[iphi] +
+                           (phiFV[iphi] - phiTV[iphi]) *
+                               (1. + tanh((i - n() * frac) / (n() * width))) /
+                               2.);
             }
         }
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            field_.phi(field_.n() - 1, iphi) = phiFV_[iphi];
+        for (int iphi = 0; iphi < nphi(); iphi++) {
+            setPhi(n() - 1, iphi, phiFV[iphi]);
         }
         if (verbose) {
             std::cerr << "\t"
@@ -323,38 +314,38 @@ template <class Model> class BounceCalculator {
             std::cerr << "\t"
                       << "V[phi] :\t" << v() << std::endl;
             std::cerr << "\t"
-                      << "n :\t" << field_.n() << std::endl;
+                      << "n :\t" << n() << std::endl;
         }
     }
 
+    // field excursion from the origin to the infinity
     double fieldExcursion() const {
         double normsquared = 0.;
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            normsquared +=
-                pow(field_.phi(field_.n() - 1, iphi) - field_.phi(0, iphi), 2);
+        for (int iphi = 0; iphi < nphi(); iphi++) {
+            normsquared += pow(phi(n() - 1, iphi) - phi(0, iphi), 2);
         }
         return sqrt(normsquared);
     }
 
+    // derivative of scalar field at boundary
     double derivativeAtBoundary() const {
         double normsquared = 0.;
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            normsquared += pow(field_.phi(field_.n() - 1, iphi) -
-                                   field_.phi(field_.n() - 2, iphi),
-                               2);
+        for (int iphi = 0; iphi < nphi(); iphi++) {
+            normsquared += pow(phi(n() - 1, iphi) - phi(n() - 2, iphi), 2);
         }
-        return sqrt(normsquared) / field_.dr();
+        return sqrt(normsquared) / dr();
     }
 
-    int evolveUntil(double tauend) {
+    // evolve the configuration from tau = 0 to tau = tauend
+    int evolveUntil(const double tauend) {
 
         // 1 + d + sqrt(1 + d) is maximum of absolute value of eigenvalue of
         // {{-2d, 2d},{ (1-d)/2 + 1, -2}}, which is discreitzed Laplacian for n
         // = 2. This value is 6 for d=3, and 7.23607 for d=4. The numerical
         // value of maximum of absolute value of eigenvalue of discretized
         // Laplacian for large n is 6 for d=3, and 7.21417 for d=4
-        double dtau = 2. / (1. + field_.dim() + sqrt(1. + field_.dim())) *
-                      pow(field_.dr(), 2) * safetyfactor;
+        double dtau =
+            2. / (1. + dim() + sqrt(1. + dim())) * pow(dr(), 2) * safetyfactor;
 
         if (verbose) {
             std::cerr << "evolve until tau = " << tauend << ", (dtau = " << dtau
@@ -363,20 +354,24 @@ template <class Model> class BounceCalculator {
 
         for (double tau = 0.; tau < tauend; tau += dtau) {
             evolve(dtau);
-            if (derivativeAtBoundary() * field_.rmax() / fieldExcursion() >
-                derivMax) {
+            if (derivativeAtBoundary() * rmax() / fieldExcursion() > derivMax) {
                 return -1;
             }
         }
         return 0;
     }
 
-    int solve() {
-        if (!setVacuumDone) {
-            std::cerr << "!!! correct vacua have not been set yet !!!"
-                      << std::endl;
+    // main routine to get the bounce solution
+    // See Fig. 1 of the manual
+    int solve(const std::array<double, nPhi> &phiFV,
+              const std::array<double, nPhi> &phiTV) {
+        if (model_->vpot(phiTV.data()) > model_->vpot(phiFV.data())) {
+            std::cerr
+                << "!!! energy of true vacuum is larger than false vacuum !!!"
+                << std::endl;
             return -1;
         }
+        VFV = model_->vpot(phiFV.data());
 
         // make the bubble wall thin to get negative potential energy
         // if V is positive, make the wall thin.
@@ -386,32 +381,31 @@ template <class Model> class BounceCalculator {
         }
         double xTV = xTV0;
         double width = width0;
-        setInitial(xTV, width);
+        setInitial(xTV, width, phiFV, phiTV);
         while (v() > 0.) {
             width = width * 0.5;
-            if (width * field_.n() < 1.) {
+            if (width * n() < 1.) {
                 if (verbose) {
                     std::cerr << "the current mesh is too sparse. increase the "
                                  "number of points."
                               << std::endl;
                 }
-                field_.setN(2 * field_.n());
+                setN(2 * n());
             }
-            if (field_.n() > maxN) {
+            if (n() > maxN) {
                 std::cerr << "!!! n became too large !!!" << std::endl;
                 return -1;
             }
-            setInitial(xTV, width);
+            setInitial(xTV, width, phiFV, phiTV);
         }
-
         // make the size of the bubble smaller enough than the size of the
-        // sphere if dphi/dr at the boundary becomes too large during flow, take
-        // smaller bounce configuration
+        // sphere if dphi/dr at the boundary becomes too large during flow,
+        // take smaller bounce configuration
         if (verbose) {
             std::cerr << "probing the size of the bounce configuration ..."
                       << std::endl;
         }
-        while (evolveUntil(tend1 * std::pow(field_.rmax(), 2)) != 0) {
+        while (evolveUntil(tend1 * rmax() * rmax()) != 0) {
             if (verbose) {
                 std::cerr << "the size of the bounce is too large. initial "
                              "condition is scale transformed."
@@ -419,27 +413,27 @@ template <class Model> class BounceCalculator {
             }
             xTV = xTV * 0.5;
             width = width * 0.5;
-            if (width * field_.n() < 1.) {
+            if (width * n() < 1.) {
                 if (verbose) {
                     std::cerr << "the current mesh is too sparse. increase the "
                                  "number of points."
                               << std::endl;
                 }
-                field_.setN(2 * field_.n());
+                setN(2 * n());
             }
             // retry by using new initial condition
-            setInitial(xTV, width);
-            if (field_.n() > maxN) {
+            setInitial(xTV, width, phiFV, phiTV);
+            if (n() > maxN) {
                 std::cerr << "!!! n became too large !!!" << std::endl;
                 return -1;
             }
         }
-
         return 0;
     }
 
     double getlambda() const { return lambda; }
 
+    // print the result
     int printBounce() const {
         if (!setVacuumDone) {
             std::cerr << "!!! correct vacua have not been set yet !!!"
@@ -449,18 +443,25 @@ template <class Model> class BounceCalculator {
 
         std::cout << "# ";
         std::cout << "r\t";
-        for (int iphi = 0; iphi < nPhi; iphi++) {
+        for (int iphi = 0; iphi < nphi(); iphi++) {
             std::cout << "phi[" << iphi << "]\t";
         }
-        for (int iphi = 0; iphi < nPhi; iphi++) {
+        for (int iphi = 0; iphi < nphi(); iphi++) {
             std::cout << "RHS of EOM[" << iphi << "]\t";
         }
         std::cout << std::endl;
 
-        for (int i = 0; i < field_.n(); i++) {
+        for (int i = 0; i < n(); i++) {
             std::cout << rBounce(i) << "\t";
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                std::cout << field_.phi(i, iphi) << "\t";
+            for (int iphi = 0; iphi < nphi(); iphi++) {
+                std::cout << phi(i, iphi) << "\t";
+            }
+            for (int iphi = 0; iphi < nphi(); iphi++) {
+                if (i != (n() - 1)) {
+                    std::cout << residualBounce(i, iphi) << "\t";
+                } else {
+                    std::cout << 0. << "\t";
+                }
             }
             std::cout << std::endl;
         }
@@ -468,6 +469,7 @@ template <class Model> class BounceCalculator {
         return 0;
     }
 
+    // print the result
     int printBounceDetails() const {
         if (!setVacuumDone) {
             std::cerr << "!!! correct vacua have not been set yet !!!"
@@ -482,20 +484,19 @@ template <class Model> class BounceCalculator {
 
         std::cout << "\tr = 0 : ";
         std::cout << "(";
-        for (int iphi = 0; iphi < nPhi - 1; iphi++) {
-            std::cout << field_.phi(0, iphi) << ", ";
+        for (int iphi = 0; iphi < nphi() - 1; iphi++) {
+            std::cout << phi(0, iphi) << ", ";
         }
-        std::cout << field_.phi(0, nPhi - 1) << ")\t";
-        std::cout << "V = " << model_.vpot(field_.phiVec(0)) << std::endl;
+        std::cout << phi(0, nphi() - 1) << ")\t";
+        std::cout << "V = " << model_->vpot(phivec(0)) << std::endl;
 
-        std::cout << "\tr = " << rBounce(field_.n() - 1) << " : ";
+        std::cout << "\tr = " << rBounce(n() - 1) << " : ";
         std::cout << "(";
-        for (int iphi = 0; iphi < nPhi - 1; iphi++) {
-            std::cerr << field_.phi(field_.n() - 1, iphi) << ", ";
+        for (int iphi = 0; iphi < nphi() - 1; iphi++) {
+            std::cerr << phi(n() - 1, iphi) << ", ";
         }
-        std::cout << field_.phi(field_.n() - 1, nPhi - 1) << ")\t";
-        std::cout << "V = " << model_.vpot(field_.phiVec(field_.n() - 1))
-                  << std::endl;
+        std::cout << phi(n() - 1, nphi() - 1) << ")\t";
+        std::cout << "V = " << model_->vpot(phivec(n() - 1)) << std::endl;
 
         std::cout << std::endl;
 
@@ -507,7 +508,7 @@ template <class Model> class BounceCalculator {
 
         std::cout << "Goodness of the solution: " << std::endl;
         std::cout << "\tderiv\t"
-                  << derivativeAtBoundary() / fieldExcursion() * field_.rmax()
+                  << derivativeAtBoundary() / fieldExcursion() * rmax()
                   << std::endl;
         std::cout << "\t(2-d)/d*T/V =\t" << oneIfBounce() << std::endl;
 
@@ -545,9 +546,6 @@ template <class Model> class BounceCalculator {
 
     // turn off verbose mode
     void verboseOff() { verbose = false; }
-
-    void setDimension(std::size_t dim) { field_.setDimension(dim); }
-    void setN(std::size_t n) { field_.setN(n); }
 };
 
 } // namespace simplebounce
