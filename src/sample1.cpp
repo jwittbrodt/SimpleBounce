@@ -1,4 +1,4 @@
-#include "SimpleBounce.hpp"
+#include "SimpleBounce/SimpleBounce.hpp"
 #include <iostream>
 using namespace std;
 using namespace simplebounce;

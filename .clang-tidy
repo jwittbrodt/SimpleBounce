@@ -1,0 +1,19 @@
+---
+Checks: "clang-diagnostic-*,
+clang-analyzer-*,
+cppcoreguidelines-*,
+bugprone-*,
+llvm-*,
+google-*,
+misc-*,
+modernize-*,
+performance-*,
+portability-*,
+readability-*,
+cert-*,
+-modernize-use-trailing-return-type,
+-google-readability-todo,
+-google-runtime-references"
+FormatStyle: none
+---
+

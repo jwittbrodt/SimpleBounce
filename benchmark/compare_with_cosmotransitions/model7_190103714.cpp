@@ -1,6 +1,6 @@
 // table 1 (7 fields) of 1901.03714
 
-#include "SimpleBounce.hpp"
+#include "SimpleBounce/SimpleBounce.hpp"
 #include <cmath>
 #include <iostream>
 #include <sys/time.h>
