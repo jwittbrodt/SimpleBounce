@@ -175,7 +175,33 @@ template <std::size_t nPhi> class FieldConfiguration {
     }
 };
 
-////////////////////////////////////////////////////////////////////////////////
+// kinetic energy of the configuration
+// \int_0^\infty dr r^{d-1} \sum_i (-1/2) \phi_i \nabla^2\phi_i
+template <std::size_t nPhi>
+double kineticEnergy(const FieldConfiguration<nPhi> &field) {
+    std::vector<double> integrand(field.n() - 1);
+    for (int i = 0; i < field.n() - 1; i++) {
+        for (int iphi = 0; iphi < nPhi; iphi++) {
+            integrand[i] -= field.r_dminusoneth(i) * field.phi(i, iphi) *
+                            field.lap(i, iphi) * 0.5;
+        }
+    }
+    return trapezoidalIntegrate(integrand.begin(), integrand.end(), field.dr());
+}
+
+// potential energy of the configuration
+// \int_0^\infty dr r^{d-1} V(\phi)
+template <std::size_t nPhi, class Model>
+double potentialEnergy(const FieldConfiguration<nPhi> &field,
+                       const Model *model, double zeroPot) {
+    std::vector<double> integrand(field.n());
+    for (int i = 0; i < field.n(); i++) {
+        integrand[i] =
+            field.r_dminusoneth(i) * (model->vpot(field.phivec(i)) - zeroPot);
+    }
+    return trapezoidalIntegrate(integrand.begin(), integrand.end(), field.dr());
+}
+
 template <std::size_t nPhi> class BounceCalculator {
   private:
     Parameters params_;
@@ -196,33 +222,6 @@ template <std::size_t nPhi> class BounceCalculator {
         // flags
         setVacuumDone = false;
         verbose = false;
-    }
-
-    // kinetic energy of the configuration
-    // \int_0^\infty dr r^{d-1} \sum_i (-1/2) \phi_i \nabla^2\phi_i
-    double t() const {
-        std::vector<double> integrand(field_.n() - 1);
-        for (int i = 0; i < field_.n() - 1; i++) {
-            integrand[i] = 0.;
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                integrand[i] -= field_.r_dminusoneth(i) * field_.phi(i, iphi) *
-                                field_.lap(i, iphi) / 2.;
-            }
-        }
-        return trapezoidalIntegrate(integrand.begin(), integrand.end(),
-                                    field_.dr());
-    }
-
-    // potential energy of the configuration
-    // \int_0^\infty dr r^{d-1} V(\phi)
-    double v() const {
-        std::vector<double> integrand(field_.n());
-        for (int i = 0; i < field_.n(); i++) {
-            integrand[i] = field_.r_dminusoneth(i) *
-                           (model_->vpot(field_.phivec(i)) - VFV);
-        }
-        return trapezoidalIntegrate(integrand.begin(), integrand.end(),
-                                    field_.dr());
     }
 
     // evolve the configuration by dtau
@@ -295,27 +294,13 @@ template <std::size_t nPhi> class BounceCalculator {
         return lambda;
     }
 
-    // RHS of Eq. 8 of 1907.02417
-    double residual(const int i, const int iphi) const {
-        double dvdphi[nPhi];
-        model_->calcDvdphi(field_.phivec(i), dvdphi);
-        return field_.lap(i, iphi) - lambda * dvdphi[iphi];
-    }
-
-    // RHS of EOM for the bounce solution at r = sqrt(lambda) * r_i
-    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
-    double residualBounce(const int i, const int iphi) const {
-        double dvdphi[nPhi];
-        model_->calcDvdphi(field_.phivec(i), dvdphi);
-        return field_.lap(i, iphi) / lambda - dvdphi[iphi];
-    }
-
     // Kinetic energy of the bounce
     // The bounce configuration can be obtained from Eq. 15 of 1907.02417
     double tBounce() const {
         double area = field_.dim() * pow(M_PI, field_.dim() / 2.) /
                       tgamma(field_.dim() / 2. + 1.);
-        return area * pow(lambda, field_.dim() / 2. - 1.) * t();
+        return area * pow(lambda, field_.dim() / 2. - 1.) *
+               kineticEnergy(field_);
     }
 
     // Potential energy of the bounce
@@ -323,17 +308,13 @@ template <std::size_t nPhi> class BounceCalculator {
     double vBounce() const {
         double area = field_.dim() * pow(M_PI, field_.dim() / 2.) /
                       tgamma(field_.dim() / 2. + 1.);
-        return area * pow(lambda, field_.dim() / 2.) * v();
+        return area * pow(lambda, field_.dim() / 2.) *
+               potentialEnergy(field_, model_, VFV);
     }
 
     // Euclidean action in d-dimensional space
     // The bounce configuration can be obtained from Eq. 15 of 1907.02417
     double action() const { return tBounce() + vBounce(); }
-
-    // this value should be one for the bounce solution
-    double oneIfBounce() const {
-        return (2. - field_.dim()) / field_.dim() * tBounce() / vBounce();
-    }
 
     // boucne solution from scale transformation
     double rBounce(const int i) const { return sqrt(lambda) * field_.dr() * i; }
@@ -386,7 +367,7 @@ template <std::size_t nPhi> class BounceCalculator {
         double xTV = params_.xTV0;
         double width = params_.width0;
         field_.setInitial(xTV, width, phiFV, phiTV);
-        while (v() > 0.) {
+        while (potentialEnergy(field_, model_, VFV) > 0.) {
             width = width * 0.5;
             if (width * field_.n() < 1.) {
                 if (verbose) {
@@ -459,13 +440,6 @@ template <std::size_t nPhi> class BounceCalculator {
             std::cout << rBounce(i) << "\t";
             for (int iphi = 0; iphi < nPhi; iphi++) {
                 std::cout << field_.phi(i, iphi) << "\t";
-            }
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                if (i != (field_.n() - 1)) {
-                    std::cout << residualBounce(i, iphi) << "\t";
-                } else {
-                    std::cout << 0. << "\t";
-                }
             }
             std::cout << std::endl;
         }
