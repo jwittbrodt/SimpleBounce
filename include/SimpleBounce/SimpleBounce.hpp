@@ -64,7 +64,17 @@ template <std::size_t nPhi> class FieldConfiguration {
         }
     }
 
+    double &phi(std::size_t i, std::size_t iPhi) {
+        return phi_[i * nPhi + iPhi];
+    }
+    double phi(std::size_t i, std::size_t iPhi) const {
+        return phi_[i * nPhi + iPhi];
+    }
+
   public:
+    double *operator[](std::size_t i) { return &phi_[i * nPhi]; }
+    const double *operator[](std::size_t i) const { return &phi_[i * nPhi]; }
+
     FieldConfiguration(std::size_t n, std::size_t dim, double rMax)
         : n_{n}, dim_{dim}, rMax_{rMax}, dr_{rMax_ / (n_ - 1)},
           drinv_{1. / dr_}, phi_{new double[n_ * nPhi]}, r_dminusoneth_{} {
@@ -81,39 +91,18 @@ template <std::size_t nPhi> class FieldConfiguration {
                     const std::array<double, nPhi> &phiTV) {
         for (int i = 0; i < n_ - 1; i++) {
             for (int iphi = 0; iphi < nPhi; iphi++) {
-                setPhi(i, iphi,
-                       phiTV[iphi] +
-                           (phiFV[iphi] - phiTV[iphi]) *
-                               (1. + tanh((i - n_ * frac) / (n_ * width))) /
-                               2.);
+                phi(i, iphi) = phiTV[iphi] +
+                               (phiFV[iphi] - phiTV[iphi]) *
+                                   (1. + tanh((i - n_ * frac) / (n_ * width))) /
+                                   2.;
             }
         }
         for (int iphi = 0; iphi < nPhi; iphi++) {
-            setPhi(n_ - 1, iphi, phiFV[iphi]);
+            phi(n_ - 1, iphi) = phiFV[iphi];
         }
     }
 
     ~FieldConfiguration() { delete[] phi_; }
-
-    // return the value of scalar field phi_iphi at r_i
-    double phi(const int i, const int iphi) const {
-        return phi_[i * nPhi + iphi];
-    }
-
-    // set the value of scalar field phi_iphi to phi
-    void setPhi(const int i, const int iphi, const double phi) {
-        phi_[i * nPhi + iphi] = phi;
-    }
-
-    // add phi to the value of scalar field phi_iphi
-    void addToPhi(const int i, const int iphi, const double phi) {
-        phi_[i * nPhi + iphi] += phi;
-    }
-
-    // return the address of phi_0 at r_i.
-    // phi_0, phi_1, phi_2, ... can be obtained by x[0], x[1], x[2], ... after x
-    // = phivec(i)
-    double *phivec(const int i) const { return &phi_[i * nPhi + 0]; }
 
     // set the dimension of the Euclidean space
     void setDimension(const int dim) {
@@ -182,7 +171,7 @@ double kineticEnergy(const FieldConfiguration<nPhi> &field) {
     std::vector<double> integrand(field.n() - 1);
     for (int i = 0; i < field.n() - 1; i++) {
         for (int iphi = 0; iphi < nPhi; iphi++) {
-            integrand[i] -= field.r_dminusoneth(i) * field.phi(i, iphi) *
+            integrand[i] -= field.r_dminusoneth(i) * field[i][iphi] *
                             field.lap(i, iphi) * 0.5;
         }
     }
@@ -197,7 +186,7 @@ double potentialEnergy(const FieldConfiguration<nPhi> &field,
     std::vector<double> integrand(field.n());
     for (int i = 0; i < field.n(); i++) {
         integrand[i] =
-            field.r_dminusoneth(i) * (model->vpot(field.phivec(i)) - zeroPot);
+            field.r_dminusoneth(i) * (model->vpot(field[i]) - zeroPot);
     }
     return trapezoidalIntegrate(integrand.begin(), integrand.end(), field.dr());
 }
@@ -337,7 +326,7 @@ template <std::size_t nPhi> class BounceCalculator {
             integrand1[i] = 0.;
             integrand2[i] = 0.;
             double dvdphi[nPhi];
-            model_->calcDvdphi(field.phivec(i), dvdphi);
+            model_->calcDvdphi(field[i], dvdphi);
             for (int iphi = 0; iphi < nPhi; iphi++) {
                 integrand1[i] +=
                     field.r_dminusoneth(i) * dvdphi[iphi] * laplacian[i][iphi];
@@ -359,7 +348,7 @@ template <std::size_t nPhi> class BounceCalculator {
         double RHS[n][nPhi];
         for (int i = 0; i < n - 1; i++) {
             double dvdphi[nPhi];
-            model_->calcDvdphi(field.phivec(i), dvdphi);
+            model_->calcDvdphi(field[i], dvdphi);
             for (int iphi = 0; iphi < nPhi; iphi++) {
                 RHS[i][iphi] = laplacian[i][iphi] - lambda * dvdphi[iphi];
             }
@@ -380,7 +369,7 @@ template <std::size_t nPhi> class BounceCalculator {
         // phi at boundary is fixed to phiFV and will not be updated.
         for (int i = 0; i < n - 1; i++) {
             for (int iphi = 0; iphi < nPhi; iphi++) {
-                field.addToPhi(i, iphi, dtautilde * RHS[i][iphi]);
+                field[i][iphi] += dtautilde * RHS[i][iphi];
             }
         }
 
