@@ -24,13 +24,10 @@ int main() {
     std::array<double, 1> phiFV{0.};  // false vacuum
 
     // calcualte the bounce solution
-    bounce.solve(phiFV, phiTV);
-
-    // show the results
-    bounce.printBounce();
+    double action = bounce.solve(phiFV, phiTV);
 
     // show the Euclidean action
-    cout << "S_E = " << bounce.action() << endl;
+    cout << "S_E = " << action << endl;
 
     return 0;
 }

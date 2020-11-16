@@ -8,8 +8,7 @@ TEST_CASE("Model 1") {
 
     std::array<double, 1> phiTV{5.}; // a point at which V<0
     std::array<double, 1> phiFV{0.}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(52.366607861));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(52.366607861));
 
     BENCHMARK("solve Model1") { return bounce.solve(phiFV, phiTV); };
 }
@@ -20,8 +19,7 @@ TEST_CASE("Model 1a") {
 
     std::array<double, 1> phiTV{1.}; // a point at which V<0
     std::array<double, 1> phiFV{0.}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(1083.28));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(1083.28));
 
     BENCHMARK("solve Model 1a") { return bounce.solve(phiFV, phiTV); };
 }
@@ -32,8 +30,7 @@ TEST_CASE("Model 1b") {
 
     std::array<double, 1> phiTV{1.}; // a point at which V<0
     std::array<double, 1> phiFV{0.}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(6.62391));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(6.62391));
 
     BENCHMARK("solve Model 1b") { return bounce.solve(phiFV, phiTV); };
 }
@@ -43,8 +40,7 @@ TEST_CASE("Model 2") {
     simplebounce::BounceCalculator<2> bounce(&model, 3);
     std::array<double, 2> phiTV{1., 1.}; // a point at which V<0
     std::array<double, 2> phiFV{0., 0.}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(20.82));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(20.82));
 
     BENCHMARK("solve Model 2") { return bounce.solve(phiFV, phiTV); };
 }
@@ -54,8 +50,7 @@ TEST_CASE("Model 2a") {
     simplebounce::BounceCalculator<2> bounce(&model, 3);
     std::array<double, 2> phiTV{1., 1.}; // a point at which V<0
     std::array<double, 2> phiFV{0., 0.}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(1748.07));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(1748.07));
 
     BENCHMARK("solve Model 2a") { return bounce.solve(phiFV, phiTV); };
 }
@@ -65,8 +60,7 @@ TEST_CASE("Model 2b") {
     simplebounce::BounceCalculator<2> bounce(&model, 3);
     std::array<double, 2> phiTV{1., 1.}; // a point at which V<0
     std::array<double, 2> phiFV{0., 0.}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(4.44616));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(4.44616));
 
     BENCHMARK("solve Model 2b") { return bounce.solve(phiFV, phiTV); };
 }
@@ -76,8 +70,7 @@ TEST_CASE("Model 3") {
     simplebounce::BounceCalculator<3> bounce(&model, 3);
     std::array<double, 3> phiTV{1., 1., 1.}; // a point at which V<0
     std::array<double, 3> phiFV{0., 0., 0.}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(21.9159));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(21.9159));
 
     BENCHMARK("solve Model 3") { return bounce.solve(phiFV, phiTV); };
 }
@@ -87,8 +80,7 @@ TEST_CASE("Model 4") {
     simplebounce::BounceCalculator<4> bounce(&model, 3);
     std::array<double, 4> phiTV{1., 1., 1., 1.}; // a point at which V<0
     std::array<double, 4> phiFV{0., 0., 0., 0.}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(55.8148));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(55.8148));
 
     BENCHMARK("solve Model 4") { return bounce.solve(phiFV, phiTV); };
 }
@@ -98,8 +90,7 @@ TEST_CASE("Model 5") {
     simplebounce::BounceCalculator<5> bounce(&model, 3);
     std::array<double, 5> phiTV{1, 1, 1, 1, 1}; // a point at which V<0
     std::array<double, 5> phiFV{0, 0, 0, 0, 0}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(16.2475));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(16.2475));
 
     BENCHMARK("solve Model 5") { return bounce.solve(phiFV, phiTV); };
 }
@@ -109,8 +100,7 @@ TEST_CASE("Model 6") {
     simplebounce::BounceCalculator<6> bounce(&model, 3);
     std::array<double, 6> phiTV{1, 1, 1, 1, 1, 1}; // a point at which V<0
     std::array<double, 6> phiFV{0, 0, 0, 0, 0, 0}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(24.4173));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(24.4173));
 
     BENCHMARK("solve Model 6") { return bounce.solve(phiFV, phiTV); };
 }
@@ -121,8 +111,7 @@ TEST_CASE("Model 7") {
 
     std::array<double, 7> phiTV{1, 1, 1, 1, 1, 1, 1}; // a point at which V<0
     std::array<double, 7> phiFV{0, 0, 0, 0, 0, 0, 0}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(36.5977));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(36.5977));
 
     BENCHMARK("solve Model 7") { return bounce.solve(phiFV, phiTV); };
 }
@@ -133,8 +122,7 @@ TEST_CASE("Model 8") {
 
     std::array<double, 8> phiTV{1, 1, 1, 1, 1, 1, 1, 1}; // a point at which V<0
     std::array<double, 8> phiFV{0, 0, 0, 0, 0, 0, 0, 0}; // false vacuum
-    REQUIRE(bounce.solve(phiFV, phiTV) == 0);
-    REQUIRE(bounce.action() == Approx(45.9042));
+    REQUIRE(bounce.solve(phiFV, phiTV) == Approx(45.9042));
 
     BENCHMARK("solve Model 8") { return bounce.solve(phiFV, phiTV); };
 }

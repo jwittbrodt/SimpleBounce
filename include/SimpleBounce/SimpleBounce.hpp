@@ -205,151 +205,23 @@ double potentialEnergy(const FieldConfiguration<nPhi> &field,
 template <std::size_t nPhi> class BounceCalculator {
   private:
     Parameters params_;
-    FieldConfiguration<nPhi> field_;
+    std::size_t dim_;
 
     double lambda;
 
     GenericModel<nPhi> *model_;
-    bool setVacuumDone;
     double VFV;
-    bool verbose;
+    bool verbose = false;
 
   public:
     BounceCalculator(GenericModel<nPhi> *model, std::size_t dim = 4,
                      Parameters params = {})
-        : params_{params}, field_{params_.initialN, dim, params_.rMax},
-          model_{model} {
-        // flags
-        setVacuumDone = false;
-        verbose = false;
-    }
-
-    // evolve the configuration by dtau
-    double evolve(const double dtau) {
-
-        double laplacian[field_.n()][nPhi];
-
-        // \nabla^2 \phi_iphi at r = r_i
-        for (int i = 0; i < field_.n() - 1; i++) {
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                laplacian[i][iphi] = field_.lap(i, iphi);
-            }
-        }
-
-        // integral1 : \int_0^\infty dr r^{d-1} \sum_i (\partial V /
-        // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr r^{d-1}
-        // \sum_i (\partial V / \partial\phi_i)^2
-        double integrand1[field_.n()], integrand2[field_.n()];
-        for (int i = 0; i < field_.n() - 1; i++) {
-            integrand1[i] = 0.;
-            integrand2[i] = 0.;
-            double dvdphi[nPhi];
-            model_->calcDvdphi(field_.phivec(i), dvdphi);
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                integrand1[i] +=
-                    field_.r_dminusoneth(i) * dvdphi[iphi] * laplacian[i][iphi];
-                integrand2[i] +=
-                    field_.r_dminusoneth(i) * dvdphi[iphi] * dvdphi[iphi];
-            }
-        }
-        integrand1[field_.n() - 1] = 0.;
-        integrand2[field_.n() - 1] = 0.;
-
-        // Eq. 9 of 1907.02417
-        lambda = trapezoidalIntegrate(
-                     &integrand1[0], &integrand1[0] + field_.n(), field_.dr()) /
-                 trapezoidalIntegrate(&integrand2[0],
-                                      &integrand2[0] + field_.n(), field_.dr());
-
-        // RHS of Eq. 8 of 1907.02417
-        // phi at boundary is fixed to phiFV and will not be updated.
-        double RHS[field_.n()][nPhi];
-        for (int i = 0; i < field_.n() - 1; i++) {
-            double dvdphi[nPhi];
-            model_->calcDvdphi(field_.phivec(i), dvdphi);
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                RHS[i][iphi] = laplacian[i][iphi] - lambda * dvdphi[iphi];
-            }
-        }
-
-        // if RHS of EOM at the origin is too big, smaller step is taken.
-        double sum = 0.;
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            sum += RHS[0][iphi] * RHS[0][iphi];
-        }
-        double dtautilde =
-            params_.maximumvariation * field_.fieldExcursion() / sqrt(sum);
-        if (dtau < dtautilde) {
-            dtautilde = dtau;
-        }
-
-        // flow by Eq. 8 of 1907.02417
-        // phi at boundary is fixed to phiFV and will not be updated.
-        for (int i = 0; i < field_.n() - 1; i++) {
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                field_.addToPhi(i, iphi, dtautilde * RHS[i][iphi]);
-            }
-        }
-
-        return lambda;
-    }
-
-    // Kinetic energy of the bounce
-    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
-    double tBounce() const {
-        double area = field_.dim() * pow(M_PI, field_.dim() / 2.) /
-                      tgamma(field_.dim() / 2. + 1.);
-        return area * pow(lambda, field_.dim() / 2. - 1.) *
-               kineticEnergy(field_);
-    }
-
-    // Potential energy of the bounce
-    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
-    double vBounce() const {
-        double area = field_.dim() * pow(M_PI, field_.dim() / 2.) /
-                      tgamma(field_.dim() / 2. + 1.);
-        return area * pow(lambda, field_.dim() / 2.) *
-               potentialEnergy(field_, model_, VFV);
-    }
-
-    // Euclidean action in d-dimensional space
-    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
-    double action() const { return tBounce() + vBounce(); }
-
-    // boucne solution from scale transformation
-    double rBounce(const int i) const { return sqrt(lambda) * field_.dr() * i; }
-
-    // evolve the configuration from tau = 0 to tau = tauend
-    int evolveUntil(const double tauend) {
-
-        // 1 + d + sqrt(1 + d) is maximum of absolute value of eigenvalue of
-        // {{-2d, 2d},{ (1-d)/2 + 1, -2}}, which is discreitzed Laplacian for n
-        // = 2. This value is 6 for d=3, and 7.23607 for d=4. The numerical
-        // value of maximum of absolute value of eigenvalue of discretized
-        // Laplacian for large n is 6 for d=3, and 7.21417 for d=4
-        double dtau = 2. / (1. + field_.dim() + sqrt(1. + field_.dim())) *
-                      pow(field_.dr(), 2) * params_.safetyfactor;
-
-        if (verbose) {
-            std::cerr << "evolve until tau = " << tauend << ", (dtau = " << dtau
-                      << ")" << std::endl;
-        }
-
-        for (double tau = 0.; tau < tauend; tau += dtau) {
-            evolve(dtau);
-            if (field_.derivativeAtBoundary() * params_.rMax /
-                    field_.fieldExcursion() >
-                params_.derivMax) {
-                return -1;
-            }
-        }
-        return 0;
-    }
+        : params_{params}, dim_{dim}, model_{model} {}
 
     // main routine to get the bounce solution
     // See Fig. 1 of the manual
-    int solve(const std::array<double, nPhi> &phiFV,
-              const std::array<double, nPhi> &phiTV) {
+    double solve(const std::array<double, nPhi> &phiFV,
+                 const std::array<double, nPhi> &phiTV) {
         if (model_->vpot(phiTV.data()) > model_->vpot(phiFV.data())) {
             std::cerr
                 << "!!! energy of true vacuum is larger than false vacuum !!!"
@@ -366,22 +238,23 @@ template <std::size_t nPhi> class BounceCalculator {
         }
         double xTV = params_.xTV0;
         double width = params_.width0;
-        field_.setInitial(xTV, width, phiFV, phiTV);
-        while (potentialEnergy(field_, model_, VFV) > 0.) {
+        FieldConfiguration<nPhi> field{params_.initialN, dim_, params_.rMax};
+        field.setInitial(xTV, width, phiFV, phiTV);
+        while (potentialEnergy(field, model_, VFV) > 0.) {
             width = width * 0.5;
-            if (width * field_.n() < 1.) {
+            if (width * field.n() < 1.) {
                 if (verbose) {
                     std::cerr << "the current mesh is too sparse. increase the "
                                  "number of points."
                               << std::endl;
                 }
-                field_.setN(2 * field_.n());
+                field.setN(2 * field.n());
             }
-            if (field_.n() > params_.maxN) {
+            if (field.n() > params_.maxN) {
                 std::cerr << "!!! n became too large !!!" << std::endl;
                 return -1;
             }
-            field_.setInitial(xTV, width, phiFV, phiTV);
+            field.setInitial(xTV, width, phiFV, phiTV);
         }
         // make the size of the bubble smaller enough than the size of the
         // sphere if dphi/dr at the boundary becomes too large during flow,
@@ -390,7 +263,8 @@ template <std::size_t nPhi> class BounceCalculator {
             std::cerr << "probing the size of the bounce configuration ..."
                       << std::endl;
         }
-        while (evolveUntil(params_.tend1 * params_.rMax * params_.rMax) != 0) {
+        while (evolveUntil(field,
+                           params_.tend1 * params_.rMax * params_.rMax) != 0) {
             if (verbose) {
                 std::cerr << "the size of the bounce is too large. initial "
                              "condition is scale transformed."
@@ -398,55 +272,141 @@ template <std::size_t nPhi> class BounceCalculator {
             }
             xTV = xTV * 0.5;
             width = width * 0.5;
-            if (width * field_.n() < 1.) {
+            if (width * field.n() < 1.) {
                 if (verbose) {
                     std::cerr << "the current mesh is too sparse. increase the "
                                  "number of points."
                               << std::endl;
                 }
-                field_.setN(2 * field_.n());
+                field.setN(2 * field.n());
             }
             // retry by using new initial condition
-            field_.setInitial(xTV, width, phiFV, phiTV);
-            if (field_.n() > params_.maxN) {
+            field.setInitial(xTV, width, phiFV, phiTV);
+            if (field.n() > params_.maxN) {
                 std::cerr << "!!! n became too large !!!" << std::endl;
+                return -1;
+            }
+        }
+        return action(field);
+    }
+
+    // evolve the configuration from tau = 0 to tau = tauend
+    int evolveUntil(FieldConfiguration<nPhi> &field, const double tauend) {
+
+        // 1 + d + sqrt(1 + d) is maximum of absolute value of eigenvalue of
+        // {{-2d, 2d},{ (1-d)/2 + 1, -2}}, which is discreitzed Laplacian for n
+        // = 2. This value is 6 for d=3, and 7.23607 for d=4. The numerical
+        // value of maximum of absolute value of eigenvalue of discretized
+        // Laplacian for large n is 6 for d=3, and 7.21417 for d=4
+        double dtau = 2. / (1. + dim_ + sqrt(1. + dim_)) * pow(field.dr(), 2) *
+                      params_.safetyfactor;
+
+        if (verbose) {
+            std::cerr << "evolve until tau = " << tauend << ", (dtau = " << dtau
+                      << ")" << std::endl;
+        }
+
+        for (double tau = 0.; tau < tauend; tau += dtau) {
+            evolve(field, dtau);
+            if (field.derivativeAtBoundary() * params_.rMax /
+                    field.fieldExcursion() >
+                params_.derivMax) {
                 return -1;
             }
         }
         return 0;
     }
 
-    double getlambda() const { return lambda; }
+    // evolve the configuration by dtau
+    double evolve(FieldConfiguration<nPhi> &field, double dtau) {
+        const auto n = field.n();
+        double laplacian[n][nPhi];
 
-    // print the result
-    int printBounce() const {
-        if (!setVacuumDone) {
-            std::cerr << "!!! correct vacua have not been set yet !!!"
-                      << std::endl;
-            return -1;
-        }
-
-        std::cout << "# ";
-        std::cout << "r\t";
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            std::cout << "phi[" << iphi << "]\t";
-        }
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            std::cout << "RHS of EOM[" << iphi << "]\t";
-        }
-        std::cout << std::endl;
-
-        for (int i = 0; i < field_.n(); i++) {
-            std::cout << rBounce(i) << "\t";
+        // \nabla^2 \phi_iphi at r = r_i
+        for (int i = 0; i < n - 1; i++) {
             for (int iphi = 0; iphi < nPhi; iphi++) {
-                std::cout << field_.phi(i, iphi) << "\t";
+                laplacian[i][iphi] = field.lap(i, iphi);
             }
-            std::cout << std::endl;
         }
 
-        return 0;
+        // integral1 : \int_0^\infty dr r^{d-1} \sum_i (\partial V /
+        // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr r^{d-1}
+        // \sum_i (\partial V / \partial\phi_i)^2
+        double integrand1[n], integrand2[n];
+        for (int i = 0; i < n - 1; i++) {
+            integrand1[i] = 0.;
+            integrand2[i] = 0.;
+            double dvdphi[nPhi];
+            model_->calcDvdphi(field.phivec(i), dvdphi);
+            for (int iphi = 0; iphi < nPhi; iphi++) {
+                integrand1[i] +=
+                    field.r_dminusoneth(i) * dvdphi[iphi] * laplacian[i][iphi];
+                integrand2[i] +=
+                    field.r_dminusoneth(i) * dvdphi[iphi] * dvdphi[iphi];
+            }
+        }
+        integrand1[n - 1] = 0.;
+        integrand2[n - 1] = 0.;
+
+        // Eq. 9 of 1907.02417
+        lambda = trapezoidalIntegrate(&integrand1[0], &integrand1[0] + n,
+                                      field.dr()) /
+                 trapezoidalIntegrate(&integrand2[0], &integrand2[0] + n,
+                                      field.dr());
+
+        // RHS of Eq. 8 of 1907.02417
+        // phi at boundary is fixed to phiFV and will not be updated.
+        double RHS[n][nPhi];
+        for (int i = 0; i < n - 1; i++) {
+            double dvdphi[nPhi];
+            model_->calcDvdphi(field.phivec(i), dvdphi);
+            for (int iphi = 0; iphi < nPhi; iphi++) {
+                RHS[i][iphi] = laplacian[i][iphi] - lambda * dvdphi[iphi];
+            }
+        }
+
+        // if RHS of EOM at the origin is too big, smaller step is taken.
+        double sum = 0.;
+        for (int iphi = 0; iphi < nPhi; iphi++) {
+            sum += RHS[0][iphi] * RHS[0][iphi];
+        }
+        double dtautilde =
+            params_.maximumvariation * field.fieldExcursion() / sqrt(sum);
+        if (dtau < dtautilde) {
+            dtautilde = dtau;
+        }
+
+        // flow by Eq. 8 of 1907.02417
+        // phi at boundary is fixed to phiFV and will not be updated.
+        for (int i = 0; i < n - 1; i++) {
+            for (int iphi = 0; iphi < nPhi; iphi++) {
+                field.addToPhi(i, iphi, dtautilde * RHS[i][iphi]);
+            }
+        }
+
+        return lambda;
     }
 
+    // Kinetic energy of the bounce
+    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
+    double tBounce(const FieldConfiguration<nPhi> &field) const {
+        double area = dim_ * pow(M_PI, dim_ / 2.) / tgamma(dim_ / 2. + 1.);
+        return area * pow(lambda, dim_ / 2. - 1.) * kineticEnergy(field);
+    }
+
+    // Potential energy of the bounce
+    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
+    double vBounce(const FieldConfiguration<nPhi> &field) const {
+        double area = dim_ * pow(M_PI, dim_ / 2.) / tgamma(dim_ / 2. + 1.);
+        return area * pow(lambda, dim_ / 2.) *
+               potentialEnergy(field, model_, VFV);
+    }
+
+    // Euclidean action in d-dimensional space
+    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
+    double action(const FieldConfiguration<nPhi> &field) const {
+        return tBounce(field) + vBounce(field);
+    }
     // turn on verbose mode
     void verboseOn() { verbose = true; }
 
