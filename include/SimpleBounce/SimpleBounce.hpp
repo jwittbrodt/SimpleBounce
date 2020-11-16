@@ -27,11 +27,32 @@ template <std::size_t nPhi> class GenericModel {
     virtual void calcDvdphi(const double *phi, double *dvdphi) const = 0;
 };
 
+struct Parameters {
+    // initial grid size
+    std::size_t initialN = 100;
+    // maximal grid size
+    std::size_t maxN = 1000;
+    // radius at the boundary
+    double rMax = 1.;
+    double safetyfactor = 0.9;
+    // maximal variation of the field in evolve()
+    double maximumvariation = 0.01;
+    // initial value of the parameter to determine the initail configuration
+    double xTV0 = 0.5;
+    // initial value of the parameter to determine the initail configuration
+    double width0 = 0.05;
+    // maximal value of the derivative of the field at the boundary
+    double derivMax = 1e-2;
+    // set tau1
+    double tend1 = 0.4;
+};
+
 ////////////////////////////////////////////////////////////////////////////////
 template <std::size_t nPhi> class BounceCalculator {
   private:
+    Parameters params_;
     std::size_t n_, dim_;
-    double rmax_, dr_, drinv_;
+    double dr_, drinv_;
     double *phi_;
     std::vector<double> r_dminusoneth_ = {};
 
@@ -41,16 +62,6 @@ template <std::size_t nPhi> class BounceCalculator {
     bool setVacuumDone;
     double VFV;
     bool verbose;
-
-    // parameters for numerical calculation
-    double safetyfactor;
-    double maximumvariation;
-    double xTV0;
-    double width0;
-    double derivMax;
-    double tend0;
-    double tend1;
-    std::size_t maxN;
 
     // radius : r_i = i * dr
     double r(int i) const { return dr_ * i; }
@@ -106,7 +117,7 @@ template <std::size_t nPhi> class BounceCalculator {
     // set the number of grid. grid spacing dr is consistently changed.
     void setN(const int n) {
         n_ = n;
-        dr_ = rmax_ / (n - 1.);
+        dr_ = params_.rMax / (n - 1.);
         drinv_ = 1. / dr_;
         delete[] phi_;
         phi_ = new double[n * nPhi];
@@ -122,19 +133,17 @@ template <std::size_t nPhi> class BounceCalculator {
     // return the dimension of space
     int dim() const { return dim_; }
 
-    // return the radius at the boundary
-    double rmax() const { return rmax_; }
-
     // return the lattice spacing
     double dr() const { return dr_; }
 
     // return pow(r(i), dim-1)
     double r_dminusoneth(const int i) const { return r_dminusoneth_[i]; }
 
-    BounceCalculator(GenericModel<nPhi> *model, std::size_t n = 100,
-                     std::size_t dim = 4)
-        : n_{n}, dim_{dim}, rmax_{1.}, dr_{rmax_ / (n_ - 1)}, drinv_{1 / dr_},
-          phi_{new double[n_ * nPhi]}, model_{model} {
+    BounceCalculator(GenericModel<nPhi> *model, std::size_t dim = 4,
+                     Parameters params = {})
+        : params_{params}, n_{params_.initialN}, dim_{dim}, dr_{params_.rMax /
+                                                                (n_ - 1)},
+          drinv_{1 / dr_}, phi_{new double[n_ * nPhi]}, model_{model} {
         r_dminusoneth_.reserve(n_);
         for (int i = 0; i < n_; i++) {
             r_dminusoneth_.emplace_back(std::pow(r(i), dim_ - 1));
@@ -145,14 +154,6 @@ template <std::size_t nPhi> class BounceCalculator {
         verbose = false;
 
         // parameters for numerical calculation
-        safetyfactor = 0.9;
-        maximumvariation = 0.01;
-        xTV0 = 0.5;
-        width0 = 0.05;
-        derivMax = 1e-2;
-        tend0 = 0.05;
-        tend1 = 0.4;
-        maxN = 1000;
     }
 
     ~BounceCalculator() { delete[] phi_; }
@@ -232,7 +233,8 @@ template <std::size_t nPhi> class BounceCalculator {
         for (int iphi = 0; iphi < nphi(); iphi++) {
             sum += RHS[0][iphi] * RHS[0][iphi];
         }
-        double dtautilde = maximumvariation * fieldExcursion() / sqrt(sum);
+        double dtautilde =
+            params_.maximumvariation * fieldExcursion() / sqrt(sum);
         if (dtau < dtautilde) {
             dtautilde = dtau;
         }
@@ -344,8 +346,8 @@ template <std::size_t nPhi> class BounceCalculator {
         // = 2. This value is 6 for d=3, and 7.23607 for d=4. The numerical
         // value of maximum of absolute value of eigenvalue of discretized
         // Laplacian for large n is 6 for d=3, and 7.21417 for d=4
-        double dtau =
-            2. / (1. + dim() + sqrt(1. + dim())) * pow(dr(), 2) * safetyfactor;
+        double dtau = 2. / (1. + dim() + sqrt(1. + dim())) * pow(dr(), 2) *
+                      params_.safetyfactor;
 
         if (verbose) {
             std::cerr << "evolve until tau = " << tauend << ", (dtau = " << dtau
@@ -354,7 +356,8 @@ template <std::size_t nPhi> class BounceCalculator {
 
         for (double tau = 0.; tau < tauend; tau += dtau) {
             evolve(dtau);
-            if (derivativeAtBoundary() * rmax() / fieldExcursion() > derivMax) {
+            if (derivativeAtBoundary() * params_.rMax / fieldExcursion() >
+                params_.derivMax) {
                 return -1;
             }
         }
@@ -379,8 +382,8 @@ template <std::size_t nPhi> class BounceCalculator {
             std::cerr << "probing a thickness to get negative V[phi] ..."
                       << std::endl;
         }
-        double xTV = xTV0;
-        double width = width0;
+        double xTV = params_.xTV0;
+        double width = params_.width0;
         setInitial(xTV, width, phiFV, phiTV);
         while (v() > 0.) {
             width = width * 0.5;
@@ -392,7 +395,7 @@ template <std::size_t nPhi> class BounceCalculator {
                 }
                 setN(2 * n());
             }
-            if (n() > maxN) {
+            if (n() > params_.maxN) {
                 std::cerr << "!!! n became too large !!!" << std::endl;
                 return -1;
             }
@@ -405,7 +408,7 @@ template <std::size_t nPhi> class BounceCalculator {
             std::cerr << "probing the size of the bounce configuration ..."
                       << std::endl;
         }
-        while (evolveUntil(tend1 * rmax() * rmax()) != 0) {
+        while (evolveUntil(params_.tend1 * params_.rMax * params_.rMax) != 0) {
             if (verbose) {
                 std::cerr << "the size of the bounce is too large. initial "
                              "condition is scale transformed."
@@ -423,7 +426,7 @@ template <std::size_t nPhi> class BounceCalculator {
             }
             // retry by using new initial condition
             setInitial(xTV, width, phiFV, phiTV);
-            if (n() > maxN) {
+            if (n() > params_.maxN) {
                 std::cerr << "!!! n became too large !!!" << std::endl;
                 return -1;
             }
@@ -508,38 +511,12 @@ template <std::size_t nPhi> class BounceCalculator {
 
         std::cout << "Goodness of the solution: " << std::endl;
         std::cout << "\tderiv\t"
-                  << derivativeAtBoundary() / fieldExcursion() * rmax()
+                  << derivativeAtBoundary() / fieldExcursion() * params_.rMax
                   << std::endl;
         std::cout << "\t(2-d)/d*T/V =\t" << oneIfBounce() << std::endl;
 
         return 0;
     }
-
-    void setSafetyfactor(double x) { safetyfactor = x; }
-
-    // set the parameter to determine the maximal variation of the field in
-    // evolve()
-    void setMaximumvariation(double x) { maximumvariation = x; }
-
-    // set the initial value of the parameter to determine the initail
-    // configuration
-    void setXTV0(double x) { xTV0 = x; }
-
-    // set the initial value of the parameter to determine the initail
-    // configuration
-    void setWidth0(double x) { width0 = x; }
-
-    // set the maximal value of the derivative of field at the boundary
-    void setDerivMax(double x) { derivMax = x; }
-
-    // set tau0
-    void setTend0(double x) { tend0 = x; }
-
-    // set tau1
-    void setTend1(double x) { tend1 = x; }
-
-    // set the maximal value of the grid
-    void setMaxN(int x) { maxN = x; }
 
     // turn on verbose mode
     void verboseOn() { verbose = true; }

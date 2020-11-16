@@ -4,7 +4,7 @@
 
 TEST_CASE("Model 1") {
     Model1 model;
-    simplebounce::BounceCalculator<1> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<1> bounce(&model, 3);
 
     std::array<double, 1> phiTV{5.}; // a point at which V<0
     std::array<double, 1> phiFV{0.}; // false vacuum
@@ -16,7 +16,7 @@ TEST_CASE("Model 1") {
 
 TEST_CASE("Model 1a") {
     Model1a model;
-    simplebounce::BounceCalculator<1> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<1> bounce(&model, 3);
 
     std::array<double, 1> phiTV{1.}; // a point at which V<0
     std::array<double, 1> phiFV{0.}; // false vacuum
@@ -28,7 +28,7 @@ TEST_CASE("Model 1a") {
 
 TEST_CASE("Model 1b") {
     Model1b model;
-    simplebounce::BounceCalculator<1> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<1> bounce(&model, 3);
 
     std::array<double, 1> phiTV{1.}; // a point at which V<0
     std::array<double, 1> phiFV{0.}; // false vacuum
@@ -40,7 +40,7 @@ TEST_CASE("Model 1b") {
 
 TEST_CASE("Model 2") {
     Model2 model;
-    simplebounce::BounceCalculator<2> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<2> bounce(&model, 3);
     std::array<double, 2> phiTV{1., 1.}; // a point at which V<0
     std::array<double, 2> phiFV{0., 0.}; // false vacuum
     REQUIRE(bounce.solve(phiFV, phiTV) == 0);
@@ -51,7 +51,7 @@ TEST_CASE("Model 2") {
 
 TEST_CASE("Model 2a") {
     Model2a model;
-    simplebounce::BounceCalculator<2> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<2> bounce(&model, 3);
     std::array<double, 2> phiTV{1., 1.}; // a point at which V<0
     std::array<double, 2> phiFV{0., 0.}; // false vacuum
     REQUIRE(bounce.solve(phiFV, phiTV) == 0);
@@ -62,7 +62,7 @@ TEST_CASE("Model 2a") {
 
 TEST_CASE("Model 2b") {
     Model2b model;
-    simplebounce::BounceCalculator<2> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<2> bounce(&model, 3);
     std::array<double, 2> phiTV{1., 1.}; // a point at which V<0
     std::array<double, 2> phiFV{0., 0.}; // false vacuum
     REQUIRE(bounce.solve(phiFV, phiTV) == 0);
@@ -73,7 +73,7 @@ TEST_CASE("Model 2b") {
 
 TEST_CASE("Model 3") {
     Model3 model;
-    simplebounce::BounceCalculator<3> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<3> bounce(&model, 3);
     std::array<double, 3> phiTV{1., 1., 1.}; // a point at which V<0
     std::array<double, 3> phiFV{0., 0., 0.}; // false vacuum
     REQUIRE(bounce.solve(phiFV, phiTV) == 0);
@@ -84,7 +84,7 @@ TEST_CASE("Model 3") {
 
 TEST_CASE("Model 4") {
     Model4 model;
-    simplebounce::BounceCalculator<4> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<4> bounce(&model, 3);
     std::array<double, 4> phiTV{1., 1., 1., 1.}; // a point at which V<0
     std::array<double, 4> phiFV{0., 0., 0., 0.}; // false vacuum
     REQUIRE(bounce.solve(phiFV, phiTV) == 0);
@@ -95,7 +95,7 @@ TEST_CASE("Model 4") {
 
 TEST_CASE("Model 5") {
     Model5 model;
-    simplebounce::BounceCalculator<5> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<5> bounce(&model, 3);
     std::array<double, 5> phiTV{1, 1, 1, 1, 1}; // a point at which V<0
     std::array<double, 5> phiFV{0, 0, 0, 0, 0}; // false vacuum
     REQUIRE(bounce.solve(phiFV, phiTV) == 0);
@@ -106,7 +106,7 @@ TEST_CASE("Model 5") {
 
 TEST_CASE("Model 6") {
     Model6 model;
-    simplebounce::BounceCalculator<6> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<6> bounce(&model, 3);
     std::array<double, 6> phiTV{1, 1, 1, 1, 1, 1}; // a point at which V<0
     std::array<double, 6> phiFV{0, 0, 0, 0, 0, 0}; // false vacuum
     REQUIRE(bounce.solve(phiFV, phiTV) == 0);
@@ -117,7 +117,7 @@ TEST_CASE("Model 6") {
 
 TEST_CASE("Model 7") {
     Model7 model;
-    simplebounce::BounceCalculator<7> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<7> bounce(&model, 3);
 
     std::array<double, 7> phiTV{1, 1, 1, 1, 1, 1, 1}; // a point at which V<0
     std::array<double, 7> phiFV{0, 0, 0, 0, 0, 0, 0}; // false vacuum
@@ -129,7 +129,7 @@ TEST_CASE("Model 7") {
 
 TEST_CASE("Model 8") {
     Model8 model;
-    simplebounce::BounceCalculator<8> bounce(&model, 100, 3);
+    simplebounce::BounceCalculator<8> bounce(&model, 3);
 
     std::array<double, 8> phiTV{1, 1, 1, 1, 1, 1, 1, 1}; // a point at which V<0
     std::array<double, 8> phiFV{0, 0, 0, 0, 0, 0, 0, 0}; // false vacuum
