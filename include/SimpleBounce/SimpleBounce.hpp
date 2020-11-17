@@ -59,7 +59,7 @@ template <std::size_t nPhi> class FieldConfiguration {
     // calculate and save pow(r(i), dim-1)
     void updateInfo() {
         r_dminusoneth_.resize(n_);
-        for (int i = 0; i < n(); i++) {
+        for (int i = 0; i < n_; i++) {
             r_dminusoneth_[i] = pow(r(i), dim_ - 1);
         }
     }
@@ -132,16 +132,17 @@ template <std::size_t nPhi> class FieldConfiguration {
     // return pow(r(i), dim-1)
     double r_dminusoneth(const int i) const { return r_dminusoneth_[i]; }
 
-    // Laplacian in radial coordinate : \nabla^2 \phi = d^2 phi / dr^2 + (d-1)/r
-    // * dphi/dr note that rinv_[i] = 1/r(i). See Eq. 9 in the manual
-    double lap(const int i, const int iphi) const {
+    // Laplacian in radial coordinate:
+    // \nabla^2 \phi = d^2 phi / dr^2 + (d-1)/r * dphi/dr
+    double lap(std::size_t i, std::size_t iphi) const {
         if (i == 0) {
-            return 2. * (phi(1, iphi) - phi(0, iphi)) * drinv_ * drinv_ * dim_;
+            return 2 * (phi(1, iphi) - phi(0, iphi)) * std::pow(drinv_, 2) *
+                   dim_;
         } else {
-            return (phi(i + 1, iphi) - 2. * phi(i, iphi) + phi(i - 1, iphi)) *
-                       drinv_ * drinv_ +
-                   (phi(i + 1, iphi) - phi(i - 1, iphi)) * 0.5 * drinv_ *
-                       (dim_ - 1.) / r(i);
+            return std::pow(drinv_, 2) *
+                   (phi(i + 1, iphi) - 2 * phi(i, iphi) + phi(i - 1, iphi) +
+                    (phi(i + 1, iphi) - phi(i - 1, iphi)) * (dim_ - 1) /
+                        static_cast<double>(2 * i));
         }
     }
 
