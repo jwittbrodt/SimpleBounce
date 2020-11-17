@@ -30,28 +30,46 @@ template <std::size_t nPhi> class GenericModel {
 struct Parameters {
     // initial grid size
     std::size_t initialN = 100;
-    // maximal grid size
-    std::size_t maxN = 1000;
     // radius at the boundary
     double rMax = 1.;
     double safetyfactor = 0.9;
     // maximal variation of the field in evolve()
     double maximumvariation = 0.01;
-    // initial value of the parameter to determine the initail configuration
-    double xTV0 = 0.5;
-    // initial value of the parameter to determine the initail configuration
-    double width0 = 0.05;
+    // initial value of the parameter InitBounceParams::r0Frac
+    double r0Frac = 0.5;
+    // initial value of the parameter InitBounceParams::width
+    double width = 0.05;
     // maximal value of the derivative of the field at the boundary
     double derivMax = 1e-2;
     // set tau1
     double tend1 = 0.4;
 };
 
+struct GridParams {
+    std::size_t n; //!< number of grid points in \f$ r \f$
+    double rMax;   //!< \f$ R \f$, the maximum value of \f$ r \f$
+};
+
+struct InitBounceParams {
+    double r0Frac; //!< \f$ r_0 / R \f$
+    double width;  //!< \f$ \sigma / R \f$
+};
+
 template <std::size_t nPhi> class FieldConfiguration {
+  public:
+    // maximal grid size
+    static constexpr std::size_t maxN = 1000;
+
+  private:
     std::size_t n_, dim_;
-    double rMax_, dr_, drinv_;
+    double rMax_;
     double *phi_;
-    std::vector<double> r_dminusoneth_;
+    std::array<double, nPhi> phiFV_;
+    std::array<double, nPhi> phiTV_;
+
+    double dr_ = rMax_ / (n_ - 1);
+    double drinv_ = 1 / dr_;
+    std::vector<double> r_dminusoneth_ = {};
 
     // radius : r_i = i * dr
     double r(int i) const { return dr_ * i; }
@@ -71,35 +89,59 @@ template <std::size_t nPhi> class FieldConfiguration {
         return phi_[i * nPhi + iPhi];
     }
 
+    // set the initial configuration
+    // See Eq. 11 in the manual.
+    void setInitial(const InitBounceParams &initPars) {
+        for (int i = 0; i < n_ - 1; i++) {
+            for (int iphi = 0; iphi < nPhi; iphi++) {
+                phi(i, iphi) =
+                    phiTV_[iphi] + (phiFV_[iphi] - phiTV_[iphi]) *
+                                       (1. + tanh((i - n_ * initPars.r0Frac) /
+                                                  (n_ * initPars.width))) /
+                                       2.;
+            }
+        }
+        for (int iphi = 0; iphi < nPhi; iphi++) {
+            phi(n_ - 1, iphi) = phiFV_[iphi];
+        }
+    }
+
+    void checkGridSize() {
+        if (n_ > maxN) {
+            throw(std::runtime_error("Maximum grid size exceeded"));
+        }
+    }
+
   public:
     double *operator[](std::size_t i) { return &phi_[i * nPhi]; }
     const double *operator[](std::size_t i) const { return &phi_[i * nPhi]; }
 
-    FieldConfiguration(std::size_t n, std::size_t dim, double rMax)
-        : n_{n}, dim_{dim}, rMax_{rMax}, dr_{rMax_ / (n_ - 1)},
-          drinv_{1. / dr_}, phi_{new double[n_ * nPhi]}, r_dminusoneth_{} {
+    FieldConfiguration(const std::array<double, nPhi> &phiFV,
+                       const std::array<double, nPhi> &phiTV, std::size_t dim,
+                       const GridParams &gridPars,
+                       const InitBounceParams &initPars)
+        : n_{gridPars.n}, dim_{dim}, rMax_{gridPars.rMax},
+          phi_{new double[n_ * nPhi]}, phiFV_{phiFV}, phiTV_{phiTV} {
+        checkGridSize();
         r_dminusoneth_.reserve(n_);
         for (int i = 0; i < n_; i++) {
             r_dminusoneth_.emplace_back(std::pow(r(i), dim_ - 1));
         }
+        setInitial(initPars);
     }
 
-    // set the initial configuration
-    // See Eq. 11 in the manual.
-    void setInitial(const double frac, const double width,
-                    const std::array<double, nPhi> &phiFV,
-                    const std::array<double, nPhi> &phiTV) {
-        for (int i = 0; i < n_ - 1; i++) {
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                phi(i, iphi) = phiTV[iphi] +
-                               (phiFV[iphi] - phiTV[iphi]) *
-                                   (1. + tanh((i - n_ * frac) / (n_ * width))) /
-                                   2.;
-            }
+    void resetInitialBounce(const GridParams &gridPars,
+                            const InitBounceParams &initPars) {
+        if (n_ != gridPars.n) {
+            n_ = gridPars.n;
+            checkGridSize();
+            delete[] phi_;
+            phi_ = new double[n_ * nPhi];
         }
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            phi(n_ - 1, iphi) = phiFV[iphi];
-        }
+        dr_ = rMax_ / (n_ - 1.);
+        drinv_ = 1. / dr_;
+        updateInfo();
+        setInitial(initPars);
     }
 
     ~FieldConfiguration() { delete[] phi_; }
@@ -110,21 +152,11 @@ template <std::size_t nPhi> class FieldConfiguration {
         updateInfo();
     }
 
-    // set the number of grid. grid spacing dr is consistently changed.
-    void setN(const int n) {
-        n_ = n;
-        dr_ = rMax_ / (n - 1.);
-        drinv_ = 1. / dr_;
-        delete[] phi_;
-        phi_ = new double[n * nPhi];
-        updateInfo();
-    }
-
     // return the number of the grid
-    int n() const { return n_; }
+    std::size_t n() const { return n_; }
 
     // return the dimension of space
-    int dim() const { return dim_; }
+    std::size_t dim() const { return dim_; }
 
     // return the lattice spacing
     double dr() const { return dr_; }
@@ -142,7 +174,7 @@ template <std::size_t nPhi> class FieldConfiguration {
             return std::pow(drinv_, 2) *
                    (phi(i + 1, iphi) - 2 * phi(i, iphi) + phi(i - 1, iphi) +
                     (phi(i + 1, iphi) - phi(i - 1, iphi)) * (dim_ - 1) /
-                        static_cast<double>(2 * i));
+                        (2 * i));
         }
     }
 
@@ -226,25 +258,24 @@ template <std::size_t nPhi> class BounceCalculator {
             std::cerr << "probing a thickness to get negative V[phi] ..."
                       << std::endl;
         }
-        double xTV = params_.xTV0;
-        double width = params_.width0;
-        FieldConfiguration<nPhi> field{params_.initialN, dim_, params_.rMax};
-        field.setInitial(xTV, width, phiFV, phiTV);
+        double xTV = params_.r0Frac;
+        double width = params_.width;
+        FieldConfiguration<nPhi> field{
+            phiFV, phiTV, dim_, {params_.initialN, params_.rMax}, {xTV, width}};
         while (potentialEnergy(field, model_, VFV) > 0.) {
             width = width * 0.5;
             if (width * field.n() < 1.) {
                 if (verbose) {
-                    std::cerr << "the current mesh is too sparse. increase the "
-                                 "number of points."
-                              << std::endl;
+                std::cerr << "the current mesh is too sparse. increase the "
+                             "number of points."
+                          << field.n() << std::endl;
                 }
-                field.setN(2 * field.n());
+                field.resetInitialBounce({2 * field.n(), params_.rMax},
+                                         {xTV, width});
+            } else {
+                field.resetInitialBounce({field.n(), params_.rMax},
+                                         {xTV, width});
             }
-            if (field.n() > params_.maxN) {
-                std::cerr << "!!! n became too large !!!" << std::endl;
-                return -1;
-            }
-            field.setInitial(xTV, width, phiFV, phiTV);
         }
         // make the size of the bubble smaller enough than the size of the
         // sphere if dphi/dr at the boundary becomes too large during flow,
@@ -265,16 +296,14 @@ template <std::size_t nPhi> class BounceCalculator {
             if (width * field.n() < 1.) {
                 if (verbose) {
                     std::cerr << "the current mesh is too sparse. increase the "
-                                 "number of points."
-                              << std::endl;
+                                 "number of points from "
+                              << field.n() << std::endl;
                 }
-                field.setN(2 * field.n());
-            }
-            // retry by using new initial condition
-            field.setInitial(xTV, width, phiFV, phiTV);
-            if (field.n() > params_.maxN) {
-                std::cerr << "!!! n became too large !!!" << std::endl;
-                return -1;
+                field.resetInitialBounce({2 * field.n(), params_.rMax},
+                                         {xTV, width});
+            } else {
+                field.resetInitialBounce({field.n(), params_.rMax},
+                                         {xTV, width});
             }
         }
         return action(field);
