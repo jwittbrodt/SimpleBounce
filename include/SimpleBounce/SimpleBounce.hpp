@@ -8,73 +8,14 @@
 #include <vector>
 
 namespace simplebounce {
-
-template <class F>
-double trapezoidal(F f, double a, double b, double margin,
-                   std::size_t max_refinements, double *error_estimate,
-                   double *L1) {
-    static constexpr double half = 1 / 2.;
-    using std::abs;
-
-    double ya = f(a);
-    double yb = f(b);
-    double h = (b - a) * half;
-    double I0 = (ya + yb) * h;
-    double IL0 = (abs(ya) + abs(yb)) * h;
-
-    double yh = f(a + h);
-    double I1 = I0 * half + yh * h;
-    double IL1 = IL0 * half + abs(yh) * h;
-
-    // The recursion is:
-    // I_k = 1/2 I_{k-1} + 1/2^k \sum_{j=1; j odd, j < 2^k} f(a + j(b-a)/2^k)
-    std::size_t k = 2;
-    // We want to go through at least 4 levels so we have sampled the function
-    // at least 10 times. Otherwise, we could terminate prematurely and miss
-    // essential features. This is of course possible anyway, but 10 samples
-    // seems to be a reasonable compromise.
-    double error = abs(I0 - I1);
-    while (k < 4 || (k < max_refinements && margin * error > std::abs(I1))) {
-        I0 = I1;
-        IL0 = IL1;
-
-        I1 = I0 * half;
-        IL1 = IL0 * half;
-        std::size_t p = static_cast<std::size_t>(1u) << k;
-        h *= half;
-        double sum = 0;
-        double absum = 0;
-
-        for (std::size_t j = 1; j < p; j += 2) {
-            double y = f(a + j * h);
-            sum += y;
-            absum += abs(y);
-        }
-
-        I1 += sum * h;
-        IL1 += absum * h;
-        ++k;
-        error = abs(I0 - I1);
-    }
-
-    if (error_estimate) {
-        *error_estimate = error;
-    }
-
-    if (L1) {
-        *L1 = IL1;
-    }
-
-    return I1;
-}
-
 template <class It>
 double trapezoidalIntegrate(It beginValues, It endValues, double stepSize) {
-    It curr = beginValues;
-    It next = curr + 1;
-    double result = 0.;
+    const auto halfStepSize = stepSize / 2.;
+    auto curr = beginValues;
+    auto next = curr + 1;
+    auto result = 0.;
     while (next != endValues) {
-        result += (*curr++ + *next++) * stepSize / 2.;
+        result += (*curr++ + *next++) * halfStepSize;
     }
     return result;
 }
@@ -112,6 +53,96 @@ struct GridParams {
 struct InitBounceParams {
     double r0Frac; //!< \f$ r_0 / R \f$
     double width;  //!< \f$ \sigma / R \f$
+};
+
+template <std::size_t nPhi> class InitialBounceConfiguration {
+    std::array<double, nPhi> phiFV_;
+    std::array<double, nPhi> phiTV_;
+    double width_;
+    double r0byR_;
+
+    static constexpr double half = 1 / 2.;
+
+  public:
+    InitialBounceConfiguration(const std::array<double, nPhi> &phiFV,
+                               const std::array<double, nPhi> &phiTV,
+                               double width, double r0byR)
+        : phiFV_{phiFV}, phiTV_{phiTV}, width_{width}, r0byR_{r0byR} {}
+
+    std::array<double, nPhi> phi(double rbyR) const noexcept {
+        std::array<double, nPhi> res;
+        for (int iphi = 0; iphi < nPhi; iphi++) {
+            res[iphi] =
+                phiTV_[iphi] + (phiFV_[iphi] - phiTV_[iphi]) *
+                                   (1. + tanh((rbyR - r0byR_) / width_)) * half;
+        }
+        return res;
+    }
+
+    std::vector<std::array<double, nPhi>> onGrid(std::size_t n) {
+        auto phiGrid = std::vector<std::array<double, nPhi>>(n);
+        phiGrid.front() = phiTV_;
+        const double delta = 1 / static_cast<double>(n - 1);
+        for (std::size_t i = 1; i != n - 1; ++i) {
+            phiGrid[i] = phi(i * delta);
+        }
+        phiGrid.back() = phiFV_;
+        return phiGrid;
+    }
+
+    double width() const noexcept { return width_; }
+    double &width() noexcept { return width_; }
+    double &r0byR() noexcept { return r0byR_; }
+
+    //! Determine if this initial configuration has a negative potential energy
+    //! for this model and dimensionality.
+    //!
+    //! Uses a dedicated trapezoidal integration adapted from
+    //! boost::math::quadrature::trapezoidal to perform the \f$r\f$ integral
+    //! from 0 to 1. Stops the integration as soon as the error is smaller than
+    //! half the absolute value of the integral.
+    template <class Model>
+    bool negativePotentialEnergy(const Model *model, std::size_t dim) {
+        static constexpr std::size_t max_refinements = 10;
+        static constexpr std::size_t margin = 2.;
+
+        const double zeroPot = model->vpot(phiFV_.data());
+        const auto integrand = [dim, zeroPot, model, this](double r) {
+            return std::pow(r, dim - 1) *
+                   (model->vpot(phi(r).data()) - zeroPot);
+        };
+
+        // the integrand vanishes at the endpoints by construction
+        auto I0 = 0.;
+        auto h = half;
+        auto I1 = integrand(h) * h;
+
+        // The recursion is:
+        // I_k = 1/2 I_{k-1} + 1/2^k \sum_{j=1; j odd, j < 2^k} f(a +
+        // j(b-a)/2^k)
+        std::size_t k = 2;
+        // We want to go through at least 4 levels so we have sampled the
+        // function at least 10 times. Otherwise, we could terminate prematurely
+        // and miss essential features. This is of course possible anyway, but
+        // 10 samples seems to be a reasonable compromise.
+        double error = std::abs(I0 - I1);
+        while (k < 4 ||
+               (k < max_refinements && margin * error > std::abs(I1))) {
+            I0 = I1;
+            I1 = I0 * half;
+            const std::size_t p = static_cast<std::size_t>(1u) << k;
+            h *= half;
+            double sum = 0;
+            for (std::size_t j = 1; j < p; j += 2) {
+                double y = integrand(j * h);
+                sum += y;
+            }
+            I1 += sum * h;
+            ++k;
+            error = std::abs(I0 - I1);
+        }
+        return I1 < -error * margin;
+    }
 };
 
 template <std::size_t nPhi> class FieldConfiguration {
@@ -253,87 +284,6 @@ template <std::size_t nPhi> class FieldConfiguration {
             normsquared += pow(phi(n_ - 1, iphi) - phi(n_ - 2, iphi), 2);
         }
         return sqrt(normsquared) * drinv_;
-    }
-};
-
-template <std::size_t nPhi> class InitialBounceConfiguration {
-    std::array<double, nPhi> phiFV_;
-    std::array<double, nPhi> phiTV_;
-    double width_;
-    double r0byR_;
-
-  public:
-    InitialBounceConfiguration(const std::array<double, nPhi> &phiFV,
-                               const std::array<double, nPhi> &phiTV,
-                               double width, double r0byR)
-        : phiFV_{phiFV}, phiTV_{phiTV}, width_{width}, r0byR_{r0byR} {}
-
-    std::array<double, nPhi> phi(double rbyR) const noexcept {
-        std::array<double, nPhi> res;
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            res[iphi] =
-                phiTV_[iphi] + (phiFV_[iphi] - phiTV_[iphi]) *
-                                   (1. + tanh((rbyR - r0byR_) / (width_))) / 2.;
-        }
-        return res;
-    }
-
-    double width() const noexcept { return width_; }
-
-    void adjustParameters(double width, double r0byR) noexcept {
-        width_ = width;
-        r0byR_ = r0byR;
-    }
-
-    //! Determine if this initial configuration has a negative potential energy
-    //! for this model and dimensionality.
-    //!
-    //! Uses a dedicated trapezoidal integration adapted from
-    //! boost::math::quadrature::trapezoidal to perform the \f$r\f$ integral
-    //! from 0 to 1. Stops the integration as soon as the error is smaller than
-    //! half the absolute value of the integral.
-    template <class Model>
-    bool negativePotentialEnergy(const Model *model, std::size_t dim) {
-        static constexpr double half = 1 / 2.;
-        static constexpr std::size_t max_refinements = 10;
-        static constexpr std::size_t margin = 2.;
-
-        const double zeroPot = model->vpot(phiFV_.data());
-        const auto integrand = [dim, zeroPot, model, this](double r) {
-            return std::pow(r, dim - 1) *
-                   (model->vpot(phi(r).data()) - zeroPot);
-        };
-
-        // the integrand vanishes at the endpoints by construction
-        auto I0 = 0.;
-        auto h = half;
-        auto I1 = integrand(h) * h;
-
-        // The recursion is:
-        // I_k = 1/2 I_{k-1} + 1/2^k \sum_{j=1; j odd, j < 2^k} f(a +
-        // j(b-a)/2^k)
-        std::size_t k = 2;
-        // We want to go through at least 4 levels so we have sampled the
-        // function at least 10 times. Otherwise, we could terminate prematurely
-        // and miss essential features. This is of course possible anyway, but
-        // 10 samples seems to be a reasonable compromise.
-        double error = std::abs(I0 - I1);
-        while (k < 4 ||
-               (k < max_refinements && margin * error > std::abs(I1))) {
-            I0 = I1;
-            I1 = I0 * half;
-            const std::size_t p = static_cast<std::size_t>(1u) << k;
-            h *= half;
-            double sum = 0;
-            for (std::size_t j = 1; j < p; j += 2) {
-                double y = integrand(j * h);
-                sum += y;
-            }
-            I1 += sum * h;
-            ++k;
-            error = std::abs(I0 - I1);
-        }
-        return I1 < 0;
     }
 };
 
