@@ -9,6 +9,65 @@
 
 namespace simplebounce {
 
+template <class F>
+double trapezoidal(F f, double a, double b, double margin,
+                   std::size_t max_refinements, double *error_estimate,
+                   double *L1) {
+    static constexpr double half = 1 / 2.;
+    using std::abs;
+
+    double ya = f(a);
+    double yb = f(b);
+    double h = (b - a) * half;
+    double I0 = (ya + yb) * h;
+    double IL0 = (abs(ya) + abs(yb)) * h;
+
+    double yh = f(a + h);
+    double I1 = I0 * half + yh * h;
+    double IL1 = IL0 * half + abs(yh) * h;
+
+    // The recursion is:
+    // I_k = 1/2 I_{k-1} + 1/2^k \sum_{j=1; j odd, j < 2^k} f(a + j(b-a)/2^k)
+    std::size_t k = 2;
+    // We want to go through at least 4 levels so we have sampled the function
+    // at least 10 times. Otherwise, we could terminate prematurely and miss
+    // essential features. This is of course possible anyway, but 10 samples
+    // seems to be a reasonable compromise.
+    double error = abs(I0 - I1);
+    while (k < 4 || (k < max_refinements && margin * error > std::abs(I1))) {
+        I0 = I1;
+        IL0 = IL1;
+
+        I1 = I0 * half;
+        IL1 = IL0 * half;
+        std::size_t p = static_cast<std::size_t>(1u) << k;
+        h *= half;
+        double sum = 0;
+        double absum = 0;
+
+        for (std::size_t j = 1; j < p; j += 2) {
+            double y = f(a + j * h);
+            sum += y;
+            absum += abs(y);
+        }
+
+        I1 += sum * h;
+        IL1 += absum * h;
+        ++k;
+        error = abs(I0 - I1);
+    }
+
+    if (error_estimate) {
+        *error_estimate = error;
+    }
+
+    if (L1) {
+        *L1 = IL1;
+    }
+
+    return I1;
+}
+
 template <class It>
 double trapezoidalIntegrate(It beginValues, It endValues, double stepSize) {
     It curr = beginValues;
@@ -72,7 +131,7 @@ template <std::size_t nPhi> class FieldConfiguration {
     std::vector<double> r_dminusoneth_ = {};
 
     // radius : r_i = i * dr
-    double r(int i) const { return dr_ * i; }
+    double r(std::size_t i) const { return dr_ * i; }
 
     // calculate and save pow(r(i), dim-1)
     void updateInfo() {
@@ -94,11 +153,11 @@ template <std::size_t nPhi> class FieldConfiguration {
     void setInitial(const InitBounceParams &initPars) {
         for (int i = 0; i < n_ - 1; i++) {
             for (int iphi = 0; iphi < nPhi; iphi++) {
-                phi(i, iphi) =
-                    phiTV_[iphi] + (phiFV_[iphi] - phiTV_[iphi]) *
-                                       (1. + tanh((i - n_ * initPars.r0Frac) /
-                                                  (n_ * initPars.width))) /
-                                       2.;
+                phi(i, iphi) = phiTV_[iphi] +
+                               (phiFV_[iphi] - phiTV_[iphi]) *
+                                   (1. + tanh((i - (n_ - 1) * initPars.r0Frac) /
+                                              ((n_ - 1) * initPars.width))) /
+                                   2.;
             }
         }
         for (int iphi = 0; iphi < nPhi; iphi++) {
@@ -147,7 +206,7 @@ template <std::size_t nPhi> class FieldConfiguration {
     ~FieldConfiguration() { delete[] phi_; }
 
     // set the dimension of the Euclidean space
-    void setDimension(const int dim) {
+    void setDimension(std::size_t dim) {
         dim_ = dim;
         updateInfo();
     }
@@ -162,7 +221,7 @@ template <std::size_t nPhi> class FieldConfiguration {
     double dr() const { return dr_; }
 
     // return pow(r(i), dim-1)
-    double r_dminusoneth(const int i) const { return r_dminusoneth_[i]; }
+    double r_dminusoneth(std::size_t i) const { return r_dminusoneth_[i]; }
 
     // Laplacian in radial coordinate:
     // \nabla^2 \phi = d^2 phi / dr^2 + (d-1)/r * dphi/dr
@@ -194,6 +253,87 @@ template <std::size_t nPhi> class FieldConfiguration {
             normsquared += pow(phi(n_ - 1, iphi) - phi(n_ - 2, iphi), 2);
         }
         return sqrt(normsquared) * drinv_;
+    }
+};
+
+template <std::size_t nPhi> class InitialBounceConfiguration {
+    std::array<double, nPhi> phiFV_;
+    std::array<double, nPhi> phiTV_;
+    double width_;
+    double r0byR_;
+
+  public:
+    InitialBounceConfiguration(const std::array<double, nPhi> &phiFV,
+                               const std::array<double, nPhi> &phiTV,
+                               double width, double r0byR)
+        : phiFV_{phiFV}, phiTV_{phiTV}, width_{width}, r0byR_{r0byR} {}
+
+    std::array<double, nPhi> phi(double rbyR) const noexcept {
+        std::array<double, nPhi> res;
+        for (int iphi = 0; iphi < nPhi; iphi++) {
+            res[iphi] =
+                phiTV_[iphi] + (phiFV_[iphi] - phiTV_[iphi]) *
+                                   (1. + tanh((rbyR - r0byR_) / (width_))) / 2.;
+        }
+        return res;
+    }
+
+    double width() const noexcept { return width_; }
+
+    void adjustParameters(double width, double r0byR) noexcept {
+        width_ = width;
+        r0byR_ = r0byR;
+    }
+
+    //! Determine if this initial configuration has a negative potential energy
+    //! for this model and dimensionality.
+    //!
+    //! Uses a dedicated trapezoidal integration adapted from
+    //! boost::math::quadrature::trapezoidal to perform the \f$r\f$ integral
+    //! from 0 to 1. Stops the integration as soon as the error is smaller than
+    //! half the absolute value of the integral.
+    template <class Model>
+    bool negativePotentialEnergy(const Model *model, std::size_t dim) {
+        static constexpr double half = 1 / 2.;
+        static constexpr std::size_t max_refinements = 10;
+        static constexpr std::size_t margin = 2.;
+
+        const double zeroPot = model->vpot(phiFV_.data());
+        const auto integrand = [dim, zeroPot, model, this](double r) {
+            return std::pow(r, dim - 1) *
+                   (model->vpot(phi(r).data()) - zeroPot);
+        };
+
+        // the integrand vanishes at the endpoints by construction
+        auto I0 = 0.;
+        auto h = half;
+        auto I1 = integrand(h) * h;
+
+        // The recursion is:
+        // I_k = 1/2 I_{k-1} + 1/2^k \sum_{j=1; j odd, j < 2^k} f(a +
+        // j(b-a)/2^k)
+        std::size_t k = 2;
+        // We want to go through at least 4 levels so we have sampled the
+        // function at least 10 times. Otherwise, we could terminate prematurely
+        // and miss essential features. This is of course possible anyway, but
+        // 10 samples seems to be a reasonable compromise.
+        double error = std::abs(I0 - I1);
+        while (k < 4 ||
+               (k < max_refinements && margin * error > std::abs(I1))) {
+            I0 = I1;
+            I1 = I0 * half;
+            const std::size_t p = static_cast<std::size_t>(1u) << k;
+            h *= half;
+            double sum = 0;
+            for (std::size_t j = 1; j < p; j += 2) {
+                double y = integrand(j * h);
+                sum += y;
+            }
+            I1 += sum * h;
+            ++k;
+            error = std::abs(I0 - I1);
+        }
+        return I1 < 0;
     }
 };
 
@@ -245,9 +385,9 @@ template <std::size_t nPhi> class BounceCalculator {
     double solve(const std::array<double, nPhi> &phiFV,
                  const std::array<double, nPhi> &phiTV) {
         if (model_->vpot(phiTV.data()) > model_->vpot(phiFV.data())) {
-            std::cerr
-                << "!!! energy of true vacuum is larger than false vacuum !!!"
-                << std::endl;
+            std::cerr << "!!! energy of true vacuum is larger than false "
+                         "vacuum !!!"
+                      << std::endl;
             return -1;
         }
         VFV = model_->vpot(phiFV.data());
@@ -266,9 +406,9 @@ template <std::size_t nPhi> class BounceCalculator {
             width = width * 0.5;
             if (width * field.n() < 1.) {
                 if (verbose) {
-                std::cerr << "the current mesh is too sparse. increase the "
-                             "number of points."
-                          << field.n() << std::endl;
+                    std::cerr << "the current mesh is too sparse. increase the "
+                                 "number of points."
+                              << field.n() << std::endl;
                 }
                 field.resetInitialBounce({2 * field.n(), params_.rMax},
                                          {xTV, width});
@@ -313,10 +453,11 @@ template <std::size_t nPhi> class BounceCalculator {
     int evolveUntil(FieldConfiguration<nPhi> &field, const double tauend) {
 
         // 1 + d + sqrt(1 + d) is maximum of absolute value of eigenvalue of
-        // {{-2d, 2d},{ (1-d)/2 + 1, -2}}, which is discreitzed Laplacian for n
-        // = 2. This value is 6 for d=3, and 7.23607 for d=4. The numerical
-        // value of maximum of absolute value of eigenvalue of discretized
-        // Laplacian for large n is 6 for d=3, and 7.21417 for d=4
+        // {{-2d, 2d},{ (1-d)/2 + 1, -2}}, which is discreitzed Laplacian
+        // for n = 2. This value is 6 for d=3, and 7.23607 for d=4. The
+        // numerical value of maximum of absolute value of eigenvalue of
+        // discretized Laplacian for large n is 6 for d=3, and 7.21417 for
+        // d=4
         double dtau = 2. / (1. + dim_ + sqrt(1. + dim_)) * pow(field.dr(), 2) *
                       params_.safetyfactor;
 
@@ -349,8 +490,8 @@ template <std::size_t nPhi> class BounceCalculator {
         }
 
         // integral1 : \int_0^\infty dr r^{d-1} \sum_i (\partial V /
-        // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr r^{d-1}
-        // \sum_i (\partial V / \partial\phi_i)^2
+        // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr
+        // r^{d-1} \sum_i (\partial V / \partial\phi_i)^2
         double integrand1[n], integrand2[n];
         for (int i = 0; i < n - 1; i++) {
             integrand1[i] = 0.;
