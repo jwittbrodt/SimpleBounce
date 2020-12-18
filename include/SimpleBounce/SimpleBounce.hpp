@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <iostream>
@@ -62,6 +63,7 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
     double r0byR_;
 
     static constexpr double half = 1 / 2.;
+    static constexpr double almost1 = 1 - 1e-5;
 
   public:
     InitialBounceConfiguration(const std::array<double, nPhi> &phiFV,
@@ -70,6 +72,9 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
         : phiFV_{phiFV}, phiTV_{phiTV}, width_{width}, r0byR_{r0byR} {}
 
     std::array<double, nPhi> phi(double rbyR) const noexcept {
+        if (rbyR > almost1) {
+            return phiFV_;
+        }
         std::array<double, nPhi> res;
         for (int iphi = 0; iphi < nPhi; iphi++) {
             res[iphi] =
@@ -79,7 +84,7 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
         return res;
     }
 
-    std::vector<std::array<double, nPhi>> onGrid(std::size_t n) {
+    std::vector<std::array<double, nPhi>> onGrid(std::size_t n) const {
         auto phiGrid = std::vector<std::array<double, nPhi>>(n);
         phiGrid.front() = phiTV_;
         const double delta = 1 / static_cast<double>(n - 1);
@@ -102,7 +107,8 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
     //! from 0 to 1. Stops the integration as soon as the error is smaller than
     //! half the absolute value of the integral.
     template <class Model>
-    bool negativePotentialEnergy(const Model *model, std::size_t dim) {
+    bool negativePotentialEnergy(const Model *model,
+                                 std::size_t dim) const noexcept {
         static constexpr std::size_t max_refinements = 10;
         static constexpr std::size_t margin = 2.;
 
@@ -159,17 +165,18 @@ template <std::size_t nPhi> class FieldConfiguration {
 
     double dr_ = rMax_ / (n_ - 1);
     double drinv_ = 1 / dr_;
-    std::vector<double> r_dminusoneth_ = {};
+    std::vector<double> rToDimMin1_;
 
     // radius : r_i = i * dr
-    double r(std::size_t i) const { return dr_ * i; }
+    double r(std::size_t i) const noexcept { return dr_ * i; }
 
-    // calculate and save pow(r(i), dim-1)
-    void updateInfo() {
-        r_dminusoneth_.resize(n_);
-        for (int i = 0; i < n_; i++) {
-            r_dminusoneth_[i] = pow(r(i), dim_ - 1);
+    // calculate pow(r(i), dim-1)
+    std::vector<double> calcRToDimMin1() const {
+        std::vector<double> result(n_);
+        for (std::size_t i = 0; i != n_; ++i) {
+            result[i] = pow(r(i), dim_ - 1);
         }
+        return result;
     }
 
     double &phi(std::size_t i, std::size_t iPhi) {
@@ -211,13 +218,26 @@ template <std::size_t nPhi> class FieldConfiguration {
                        const GridParams &gridPars,
                        const InitBounceParams &initPars)
         : n_{gridPars.n}, dim_{dim}, rMax_{gridPars.rMax},
-          phi_{new double[n_ * nPhi]}, phiFV_{phiFV}, phiTV_{phiTV} {
+          phi_{new double[n_ * nPhi]}, phiFV_{phiFV}, phiTV_{phiTV},
+          rToDimMin1_{calcRToDimMin1()} {
         checkGridSize();
-        r_dminusoneth_.reserve(n_);
-        for (int i = 0; i < n_; i++) {
-            r_dminusoneth_.emplace_back(std::pow(r(i), dim_ - 1));
-        }
         setInitial(initPars);
+    }
+
+    FieldConfiguration(const InitialBounceConfiguration<nPhi> &initBounce,
+                       std::size_t dim, double rMax)
+        : n_{std::max(static_cast<std::size_t>(1 / initBounce.width()), 100ul)},
+          dim_{dim}, rMax_{rMax}, phi_{new double[n_ * nPhi]}, phiFV_{},
+          phiTV_{}, rToDimMin1_{calcRToDimMin1()} {
+        checkGridSize();
+        const auto dat = initBounce.onGrid(n_);
+        assert(dat.size() == n_);
+        assert(dat.front().size() == nPhi);
+        for (std::size_t i = 0; i != n_; ++i) {
+            for (std::size_t iPhi = 0; iPhi != nPhi; ++iPhi) {
+                phi(i, iPhi) = dat[i][iPhi];
+            }
+        }
     }
 
     void resetInitialBounce(const GridParams &gridPars,
@@ -230,7 +250,7 @@ template <std::size_t nPhi> class FieldConfiguration {
         }
         dr_ = rMax_ / (n_ - 1.);
         drinv_ = 1. / dr_;
-        updateInfo();
+        rToDimMin1_ = calcRToDimMin1();
         setInitial(initPars);
     }
 
@@ -239,7 +259,7 @@ template <std::size_t nPhi> class FieldConfiguration {
     // set the dimension of the Euclidean space
     void setDimension(std::size_t dim) {
         dim_ = dim;
-        updateInfo();
+        rToDimMin1_ = calcRToDimMin1();
     }
 
     // return the number of the grid
@@ -252,7 +272,7 @@ template <std::size_t nPhi> class FieldConfiguration {
     double dr() const { return dr_; }
 
     // return pow(r(i), dim-1)
-    double r_dminusoneth(std::size_t i) const { return r_dminusoneth_[i]; }
+    double r_dminusoneth(std::size_t i) const { return rToDimMin1_[i]; }
 
     // Laplacian in radial coordinate:
     // \nabla^2 \phi = d^2 phi / dr^2 + (d-1)/r * dphi/dr
@@ -367,9 +387,9 @@ template <std::size_t nPhi> class BounceCalculator {
                                          {xTV, width});
             }
         }
-        // make the size of the bubble smaller enough than the size of the
-        // sphere if dphi/dr at the boundary becomes too large during flow,
-        // take smaller bounce configuration
+        // make the size of the bubble sufficiently smaller than the size of the
+        // sphere. If dphi/dr at the boundary becomes too large during flow,
+        // take smaller initial bounce configuration.
         if (verbose) {
             std::cerr << "probing the size of the bounce configuration ..."
                       << std::endl;
