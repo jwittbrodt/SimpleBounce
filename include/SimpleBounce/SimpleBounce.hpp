@@ -21,6 +21,21 @@ double trapezoidalIntegrate(It beginValues, It endValues, double stepSize) {
     return result;
 }
 
+template <class FunctionOnGrid>
+double gridTrapezoidalIntegrate(const FunctionOnGrid &f, std::size_t gridSize,
+                                double gridSpacing) {
+    const auto halfStepSize = gridSpacing * 0.5;
+    auto currValue = 0.;
+    auto nextValue = f(0);
+    auto result = 0.;
+    for (std::size_t i = 1; i != gridSize; ++i) {
+        currValue = nextValue;
+        nextValue = f(i);
+        result += (currValue + nextValue) * halfStepSize;
+    }
+    return result;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 template <std::size_t nPhi> class GenericModel {
   public:
@@ -44,16 +59,6 @@ struct Parameters {
     double derivMax = 1e-2;
     // set tau1
     double tend1 = 0.4;
-};
-
-struct GridParams {
-    std::size_t n; //!< number of grid points in \f$ r \f$
-    double rMax;   //!< \f$ R \f$, the maximum value of \f$ r \f$
-};
-
-struct InitBounceParams {
-    double r0Frac; //!< \f$ r_0 / R \f$
-    double width;  //!< \f$ \sigma / R \f$
 };
 
 template <std::size_t nPhi> class InitialBounceConfiguration {
@@ -86,13 +91,18 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
 
     std::vector<std::array<double, nPhi>> onGrid(std::size_t n) const {
         auto phiGrid = std::vector<std::array<double, nPhi>>(n);
-        phiGrid.front() = phiTV_;
-        const double delta = 1 / static_cast<double>(n - 1);
-        for (std::size_t i = 1; i != n - 1; ++i) {
-            phiGrid[i] = phi(i * delta);
-        }
-        phiGrid.back() = phiFV_;
+        onGrid(phiGrid);
         return phiGrid;
+    }
+
+    void onGrid(std::vector<std::array<double, nPhi>> &grid) const {
+        const auto n = grid.size();
+        grid.front() = phiTV_;
+        const auto delta = 1. / static_cast<double>(n - 1);
+        for (std::size_t i = 1; i != n - 1; ++i) {
+            grid[i] = phi(i * delta);
+        }
+        grid.back() = phiFV_;
     }
 
     double width() const noexcept { return width_; }
@@ -161,7 +171,7 @@ template <std::size_t nPhi> class FieldConfiguration {
   private:
     std::size_t n_, dim_;
     double rMax_;
-    double *phi_;
+    std::vector<std::array<double, nPhi>> phi_;
     std::array<double, nPhi> phiFV_;
     std::array<double, nPhi> phiTV_;
 
@@ -181,88 +191,37 @@ template <std::size_t nPhi> class FieldConfiguration {
         return result;
     }
 
-    double &phi(std::size_t i, std::size_t iPhi) {
-        return phi_[i * nPhi + iPhi];
-    }
-    double phi(std::size_t i, std::size_t iPhi) const {
-        return phi_[i * nPhi + iPhi];
-    }
-
-    // set the initial configuration
-    // See Eq. 11 in the manual.
-    void setInitial(const InitBounceParams &initPars) {
-        for (int i = 0; i < n_ - 1; i++) {
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                phi(i, iphi) = phiTV_[iphi] +
-                               (phiFV_[iphi] - phiTV_[iphi]) *
-                                   (1. + tanh((i - (n_ - 1) * initPars.r0Frac) /
-                                              ((n_ - 1) * initPars.width))) /
-                                   2.;
-            }
-        }
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            phi(n_ - 1, iphi) = phiFV_[iphi];
-        }
-    }
-
-    void checkGridSize() {
-        if (n_ > maxN) {
+    std::size_t
+    determineGridSize(const InitialBounceConfiguration<nPhi> &initBounce) {
+        const auto n = std::max(
+            std::size_t{100}, static_cast<std::size_t>(1 / initBounce.width()));
+        if (n > maxN) {
             throw(std::runtime_error("Maximum grid size exceeded"));
         }
+        return n;
     }
 
   public:
-    double *operator[](std::size_t i) { return &phi_[i * nPhi]; }
-    const double *operator[](std::size_t i) const { return &phi_[i * nPhi]; }
-
-    FieldConfiguration(const std::array<double, nPhi> &phiFV,
-                       const std::array<double, nPhi> &phiTV, std::size_t dim,
-                       const GridParams &gridPars,
-                       const InitBounceParams &initPars)
-        : n_{gridPars.n}, dim_{dim}, rMax_{gridPars.rMax},
-          phi_{new double[n_ * nPhi]}, phiFV_{phiFV}, phiTV_{phiTV},
-          rToDimMin1_{calcRToDimMin1()} {
-        checkGridSize();
-        setInitial(initPars);
-    }
+    double *operator[](std::size_t i) { return phi_[i].data(); }
+    const double *operator[](std::size_t i) const { return phi_[i].data(); }
 
     FieldConfiguration(const InitialBounceConfiguration<nPhi> &initBounce,
                        std::size_t dim, double rMax)
-        : n_{std::max(std::size_t{100}, static_cast<std::size_t>(1.5 / initBounce.width()))},
-          dim_{dim}, rMax_{rMax}, phi_{new double[n_ * nPhi]},
-          phiFV_{initBounce.phi(1.)}, phiTV_{initBounce.phi(0.)},
-          rToDimMin1_{calcRToDimMin1()} {
-        checkGridSize();
-        const auto dat = initBounce.onGrid(n_);
-        assert(dat.size() == n_);
-        assert(dat.front().size() == nPhi);
-        for (std::size_t i = 0; i != n_; ++i) {
-            for (std::size_t iPhi = 0; iPhi != nPhi; ++iPhi) {
-                phi(i, iPhi) = dat[i][iPhi];
-            }
+        : n_{determineGridSize(initBounce)}, dim_{dim}, rMax_{rMax},
+          phi_{initBounce.onGrid(n_)}, phiFV_{initBounce.phi(1.)},
+          phiTV_{initBounce.phi(0.)}, rToDimMin1_{calcRToDimMin1()} {}
+
+    void
+    resetInitialBounce(const InitialBounceConfiguration<nPhi> &initBounce) {
+        auto n = determineGridSize(initBounce);
+        if (n_ != n) {
+            n_ = n;
+            phi_.resize(n_);
+            dr_ = rMax_ / (n_ - 1.);
+            drinv_ = 1. / dr_;
+            rToDimMin1_ = calcRToDimMin1();
         }
-    }
-
-    void resetInitialBounce(const GridParams &gridPars,
-                            const InitBounceParams &initPars) {
-        if (n_ != gridPars.n) {
-            n_ = gridPars.n;
-            checkGridSize();
-            delete[] phi_;
-            phi_ = new double[n_ * nPhi];
-        }
-        dr_ = rMax_ / (n_ - 1.);
-        drinv_ = 1. / dr_;
-        rToDimMin1_ = calcRToDimMin1();
-        setInitial(initPars);
-    }
-
-    ~FieldConfiguration() { delete[] phi_; }
-
-    // set the dimension of the Euclidean space
-    void setDimension(std::size_t dim) {
-        dim_ = dim;
-        rToDimMin1_ = calcRToDimMin1();
+        initBounce.onGrid(phi_);
     }
 
     // return the number of the grid
@@ -279,23 +238,30 @@ template <std::size_t nPhi> class FieldConfiguration {
 
     // Laplacian in radial coordinate:
     // \nabla^2 \phi = d^2 phi / dr^2 + (d-1)/r * dphi/dr
-    double lap(std::size_t i, std::size_t iphi) const {
-        if (i == 0) {
-            return 2 * (phi(1, iphi) - phi(0, iphi)) * std::pow(drinv_, 2) *
-                   dim_;
-        } else {
-            return std::pow(drinv_, 2) *
-                   (phi(i + 1, iphi) - 2 * phi(i, iphi) + phi(i - 1, iphi) +
-                    (phi(i + 1, iphi) - phi(i - 1, iphi)) * (dim_ - 1) /
-                        (2 * i));
+    std::vector<std::array<double, nPhi>> laplacian() const {
+        std::vector<std::array<double, nPhi>> result(n_ - 1);
+        for (std::size_t i = 0; i != n_ - 1; ++i) {
+            for (std::size_t iPhi = 0; iPhi != nPhi; ++iPhi) {
+                if (i == 0) {
+                    result[i][iPhi] = 2 * (phi_[1][iPhi] - phi_[0][iPhi]) *
+                                      std::pow(drinv_, 2) * dim_;
+                } else {
+                    result[i][iPhi] = std::pow(drinv_, 2) *
+                                      (phi_[i + 1][iPhi] - 2 * phi_[i][iPhi] +
+                                       phi_[i - 1][iPhi] +
+                                       (phi_[i + 1][iPhi] - phi_[i - 1][iPhi]) *
+                                           (dim_ - 1) / (2 * i));
+                }
+            }
         }
+        return result;
     }
 
     // field excursion from the origin to the infinity
     double fieldExcursion() const {
         double normsquared = 0.;
         for (int iphi = 0; iphi < nPhi; iphi++) {
-            normsquared += pow(phi(n_ - 1, iphi) - phi(0, iphi), 2);
+            normsquared += pow(phi_.back()[iphi] - phi_.front()[iphi], 2);
         }
         return sqrt(normsquared);
     }
@@ -304,7 +270,7 @@ template <std::size_t nPhi> class FieldConfiguration {
     double derivativeAtBoundary() const {
         double normsquared = 0.;
         for (int iphi = 0; iphi < nPhi; iphi++) {
-            normsquared += pow(phi(n_ - 1, iphi) - phi(n_ - 2, iphi), 2);
+            normsquared += pow(phi_.back()[iphi] - phi_[n_ - 2][iphi], 2);
         }
         return sqrt(normsquared) * drinv_;
     }
@@ -314,11 +280,12 @@ template <std::size_t nPhi> class FieldConfiguration {
 // \int_0^\infty dr r^{d-1} \sum_i (-1/2) \phi_i \nabla^2\phi_i
 template <std::size_t nPhi>
 double kineticEnergy(const FieldConfiguration<nPhi> &field) {
+    auto laplacian = field.laplacian();
     std::vector<double> integrand(field.n() - 1);
     for (int i = 0; i < field.n() - 1; i++) {
         for (int iphi = 0; iphi < nPhi; iphi++) {
             integrand[i] -= field.r_dminusoneth(i) * field[i][iphi] *
-                            field.lap(i, iphi) * 0.5;
+                            laplacian[i][iphi] * 0.5;
         }
     }
     return trapezoidalIntegrate(integrand.begin(), integrand.end(), field.dr());
@@ -374,7 +341,7 @@ template <std::size_t nPhi> class BounceCalculator {
         auto initBounce = InitialBounceConfiguration<nPhi>{
             phiFV, phiTV, params_.width, params_.r0Frac};
         while (!initBounce.negativePotentialEnergy(model_, dim_)) {
-            initBounce.width() *= 0.8;
+            initBounce.width() *= 0.5;
         }
 
         // make the size of the bubble sufficiently smaller than the size of the
@@ -385,9 +352,6 @@ template <std::size_t nPhi> class BounceCalculator {
                       << std::endl;
         }
         FieldConfiguration<nPhi> field{initBounce, dim_, params_.rMax};
-        double xTV = initBounce.r0byR();
-        double width = initBounce.width();
-
         while (evolveUntil(field,
                            params_.tend1 * params_.rMax * params_.rMax) != 0) {
             if (verbose) {
@@ -395,20 +359,9 @@ template <std::size_t nPhi> class BounceCalculator {
                              "condition is scale transformed."
                           << std::endl;
             }
-            xTV = xTV * 0.5;
-            width = width * 0.5;
-            if (width * field.n() < 1.) {
-                if (verbose) {
-                    std::cerr << "the current mesh is too sparse. increase the "
-                                 "number of points from "
-                              << field.n() << std::endl;
-                }
-                field.resetInitialBounce({2 * field.n(), params_.rMax},
-                                         {xTV, width});
-            } else {
-                field.resetInitialBounce({field.n(), params_.rMax},
-                                         {xTV, width});
-            }
+            initBounce.r0byR() *= 0.5;
+            initBounce.width() *= 0.5;
+            field.resetInitialBounce(initBounce);
         }
         return action(field);
     }
@@ -444,14 +397,7 @@ template <std::size_t nPhi> class BounceCalculator {
     // evolve the configuration by dtau
     double evolve(FieldConfiguration<nPhi> &field, double dtau) {
         const auto n = field.n();
-        double laplacian[n][nPhi];
-
-        // \nabla^2 \phi_iphi at r = r_i
-        for (int i = 0; i < n - 1; i++) {
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                laplacian[i][iphi] = field.lap(i, iphi);
-            }
-        }
+        const auto laplacian = field.laplacian();
 
         // integral1 : \int_0^\infty dr r^{d-1} \sum_i (\partial V /
         // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr
@@ -460,8 +406,8 @@ template <std::size_t nPhi> class BounceCalculator {
         for (int i = 0; i < n - 1; i++) {
             integrand1[i] = 0.;
             integrand2[i] = 0.;
-            double dvdphi[nPhi];
-            model_->calcDvdphi(field[i], dvdphi);
+            std::array<double, nPhi> dvdphi;
+            model_->calcDvdphi(field[i], dvdphi.data());
             for (int iphi = 0; iphi < nPhi; iphi++) {
                 integrand1[i] +=
                     field.r_dminusoneth(i) * dvdphi[iphi] * laplacian[i][iphi];

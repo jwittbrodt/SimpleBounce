@@ -1,7 +1,6 @@
 #include "SimpleBounce/SimpleBounce.hpp"
 #include "TestModels.hpp"
 #include "catch.hpp"
-
 namespace {
 
 template <std::size_t nPhi> class OldFieldConfiguration {
@@ -149,9 +148,6 @@ TEST_CASE("initial configuration") {
     OldFieldConfiguration<nPhi> field{100, 4, 1.};
     field.setInitial(0.5, 0.05, fv, tv);
     simplebounce::InitialBounceConfiguration<nPhi> initField{fv, tv, 0.05, 0.5};
-    Model2 model{};
-    const auto zeroPot = model.vpot(fv.data());
-    CHECK(zeroPot > model.vpot(tv.data()));
 
     auto getField = [&field](std::size_t i) {
         auto res = std::array<double, nPhi>{};
@@ -185,32 +181,30 @@ TEST_CASE("initial configuration") {
     CHECK(getField2(50) == getField(50));
     CHECK(getField2(60) == getField(60));
     CHECK(getField2(99) == getField(99));
-
-    CHECK(field2.r_dminusoneth(10) == field.r_dminusoneth(10));
-
-    CHECK(field2.lap(33, 2) == Approx(field.lap(33, 2)));
 }
 
-TEST_CASE("r powers") {
-    static constexpr std::size_t nPhi = 1;
-    OldFieldConfiguration<nPhi> oldfield(100, 4, 1.);
-    oldfield.setInitial(0.5, 0.05, std::array<double, nPhi>{0},
-                        std::array<double, nPhi>{1});
+TEST_CASE("laplacian") {
+    static constexpr std::size_t nPhi = 2;
+    const auto fv = std::array<double, nPhi>{0, 0};
+    const auto tv = std::array<double, nPhi>{1, 1};
+    simplebounce::InitialBounceConfiguration<nPhi> initField{fv, tv, 0.05, 0.5};
+    simplebounce::FieldConfiguration<nPhi> field{initField, 4, 1.};
 
-    BENCHMARK("old fieldconfig") {
-        return oldfield.r_dminusoneth(10), oldfield.r_dminusoneth(20),
-               oldfield.r_dminusoneth(30), oldfield.r_dminusoneth(40),
-               oldfield.r_dminusoneth(50), oldfield.r_dminusoneth(60);
-    };
+    BENCHMARK("laplacian new") { return field.laplacian(); };
 
-    const auto end = std::array<double, nPhi>{0};
-    const auto start = std::array<double, nPhi>{1};
-    simplebounce::FieldConfiguration<nPhi> newfield{
-        start, end, 4, {100, 1.}, {0.5, 0.05}};
+    OldFieldConfiguration<nPhi> oldField{100, 4, 1.};
+    oldField.setInitial(0.5, 0.05, fv, tv);
 
-    BENCHMARK("new fieldconfig") {
-        return oldfield.r_dminusoneth(10), oldfield.r_dminusoneth(20),
-               oldfield.r_dminusoneth(30), oldfield.r_dminusoneth(40),
-               oldfield.r_dminusoneth(50), oldfield.r_dminusoneth(60);
+    BENCHMARK("laplacian old") {
+        const auto n = oldField.n();
+        double laplacian[n][nPhi];
+
+        // \nabla^2 \phi_iphi at r = r_i
+        for (int i = 0; i < n - 1; i++) {
+            for (int iphi = 0; iphi < nPhi; iphi++) {
+                laplacian[i][iphi] = oldField.lap(i, iphi);
+            }
+        }
+        return laplacian;
     };
 }
