@@ -48,10 +48,11 @@ template <std::size_t nPhi> class OldFieldConfiguration {
                     const std::array<double, nPhi> &phiTV) {
         for (int i = 0; i < n_ - 1; i++) {
             for (int iphi = 0; iphi < nPhi; iphi++) {
-                phi(i, iphi) = phiTV[iphi] +
-                               (phiFV[iphi] - phiTV[iphi]) *
-                                   (1. + tanh((i - n_ * frac) / (n_ * width))) /
-                                   2.;
+                phi(i, iphi) =
+                    phiTV[iphi] + (phiFV[iphi] - phiTV[iphi]) *
+                                      (1. + tanh((i - (n_ - 1) * frac) /
+                                                 ((n_ - 1) * width))) /
+                                      2.;
             }
         }
         for (int iphi = 0; iphi < nPhi; iphi++) {
@@ -124,18 +125,18 @@ template <std::size_t nPhi> class OldFieldConfiguration {
 
 TEST_CASE("initialize field configuration") {
     static constexpr std::size_t nPhi = 5;
+    const auto fv = std::array<double, nPhi>{0, 0, 0, 0, 0};
+    const auto tv = std::array<double, nPhi>{1, 1, 1, 1, 1};
     BENCHMARK("old fieldconfig") {
         OldFieldConfiguration<nPhi> field(100, 4, 1.);
-        field.setInitial(0.5, 0.05, std::array<double, nPhi>{0, 0, 0, 0, 0},
-                         std::array<double, nPhi>{1, 1, 1, 1, 1});
+        field.setInitial(0.5, 0.05, fv, tv);
         return field;
     };
 
     BENCHMARK("new fieldconfig") {
-        const auto end = std::array<double, nPhi>{0, 0, 0, 0, 0};
-        const auto start = std::array<double, nPhi>{1, 1, 1, 1, 1};
-        simplebounce::FieldConfiguration<nPhi> field{
-            start, end, 4, {100, 1.}, {0.5, 0.05}};
+        auto initField =
+            simplebounce::InitialBounceConfiguration<nPhi>{fv, tv, 0.05, 0.5};
+        auto field = simplebounce::FieldConfiguration<nPhi>{initField, 4, 1.};
         return field;
     };
 }
@@ -145,8 +146,8 @@ TEST_CASE("initial configuration") {
 
     const auto fv = std::array<double, nPhi>{0, 0};
     const auto tv = std::array<double, nPhi>{1, 1};
-    simplebounce::FieldConfiguration<nPhi> field{
-        fv, tv, 4, {100, 1.}, {0.5, 0.05}};
+    OldFieldConfiguration<nPhi> field{100, 4, 1.};
+    field.setInitial(0.5, 0.05, fv, tv);
     simplebounce::InitialBounceConfiguration<nPhi> initField{fv, tv, 0.05, 0.5};
     Model2 model{};
     const auto zeroPot = model.vpot(fv.data());
@@ -167,9 +168,6 @@ TEST_CASE("initial configuration") {
     CHECK(getField(40)[0] == Approx(grid[40][0]));
     CHECK(getField(50)[0] == Approx(grid[50][0]));
 
-    CHECK((potentialEnergy(field, &model, zeroPot) < 0) ==
-          initField.negativePotentialEnergy(&model, 4));
-
     auto field2 = simplebounce::FieldConfiguration<nPhi>{initField, 4, 1.};
 
     auto getField2 = [&field](std::size_t i) {
@@ -182,6 +180,15 @@ TEST_CASE("initial configuration") {
     CHECK(getField2(50)[0] == Approx(initField.phi(50 / 99.)[0]));
     CHECK(getField2(60)[0] == Approx(initField.phi(60 / 99.)[0]));
     CHECK(getField2(99) == initField.phi(1.));
+
+    CHECK(getField2(0) == getField(0));
+    CHECK(getField2(50) == getField(50));
+    CHECK(getField2(60) == getField(60));
+    CHECK(getField2(99) == getField(99));
+
+    CHECK(field2.r_dminusoneth(10) == field.r_dminusoneth(10));
+
+    CHECK(field2.lap(33, 2) == Approx(field.lap(33, 2)));
 }
 
 TEST_CASE("r powers") {

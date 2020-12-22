@@ -104,13 +104,16 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
     //!
     //! Uses a dedicated trapezoidal integration adapted from
     //! boost::math::quadrature::trapezoidal to perform the \f$r\f$ integral
-    //! from 0 to 1. Stops the integration as soon as the error is smaller than
-    //! half the absolute value of the integral.
+    //! from 0 to 1. Stops the integration as soon as the absolute value is
+    //! larger than margin * the integration error or after maxRefinements.
+    //! Returns true if the the resulting value is significantly less than
+    //! maxVal.
     template <class Model>
     bool negativePotentialEnergy(const Model *model,
                                  std::size_t dim) const noexcept {
-        static constexpr std::size_t max_refinements = 10;
-        static constexpr std::size_t margin = 2.;
+        static constexpr std::size_t maxRefinements = 10;
+        static constexpr double margin = 5;
+        static constexpr double maxVal = -1e-5;
 
         const double zeroPot = model->vpot(phiFV_.data());
         const auto integrand = [dim, zeroPot, model, this](double r) {
@@ -126,28 +129,27 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
         // The recursion is:
         // I_k = 1/2 I_{k-1} + 1/2^k \sum_{j=1; j odd, j < 2^k} f(a +
         // j(b-a)/2^k)
-        std::size_t k = 2;
+        auto k = 2ul;
         // We want to go through at least 4 levels so we have sampled the
         // function at least 10 times. Otherwise, we could terminate prematurely
         // and miss essential features. This is of course possible anyway, but
         // 10 samples seems to be a reasonable compromise.
-        double error = std::abs(I0 - I1);
-        while (k < 4 ||
-               (k < max_refinements && margin * error > std::abs(I1))) {
+        auto error = std::abs(I0 - I1);
+        while (k < 4 || (k < maxRefinements && margin * error > std::abs(I1))) {
             I0 = I1;
             I1 = I0 * half;
-            const std::size_t p = static_cast<std::size_t>(1u) << k;
+            const auto p = std::size_t{1} << k;
             h *= half;
-            double sum = 0;
+            auto sum = 0.;
             for (std::size_t j = 1; j < p; j += 2) {
-                double y = integrand(j * h);
+                auto y = integrand(j * h);
                 sum += y;
             }
             I1 += sum * h;
             ++k;
             error = std::abs(I0 - I1);
         }
-        return I1 < -error * margin;
+        return I1 < maxVal - error;
     }
 };
 
@@ -226,9 +228,10 @@ template <std::size_t nPhi> class FieldConfiguration {
 
     FieldConfiguration(const InitialBounceConfiguration<nPhi> &initBounce,
                        std::size_t dim, double rMax)
-        : n_{std::max(static_cast<std::size_t>(1 / initBounce.width()), 100ul)},
-          dim_{dim}, rMax_{rMax}, phi_{new double[n_ * nPhi]}, phiFV_{},
-          phiTV_{}, rToDimMin1_{calcRToDimMin1()} {
+        : n_{std::max(std::size_t{100}, static_cast<std::size_t>(1.5 / initBounce.width()))},
+          dim_{dim}, rMax_{rMax}, phi_{new double[n_ * nPhi]},
+          phiFV_{initBounce.phi(1.)}, phiTV_{initBounce.phi(0.)},
+          rToDimMin1_{calcRToDimMin1()} {
         checkGridSize();
         const auto dat = initBounce.onGrid(n_);
         assert(dat.size() == n_);
@@ -368,25 +371,12 @@ template <std::size_t nPhi> class BounceCalculator {
             std::cerr << "probing a thickness to get negative V[phi] ..."
                       << std::endl;
         }
-        double xTV = params_.r0Frac;
-        double width = params_.width;
-        FieldConfiguration<nPhi> field{
-            phiFV, phiTV, dim_, {params_.initialN, params_.rMax}, {xTV, width}};
-        while (potentialEnergy(field, model_, VFV) > 0.) {
-            width = width * 0.5;
-            if (width * field.n() < 1.) {
-                if (verbose) {
-                    std::cerr << "the current mesh is too sparse. increase the "
-                                 "number of points."
-                              << field.n() << std::endl;
-                }
-                field.resetInitialBounce({2 * field.n(), params_.rMax},
-                                         {xTV, width});
-            } else {
-                field.resetInitialBounce({field.n(), params_.rMax},
-                                         {xTV, width});
-            }
+        auto initBounce = InitialBounceConfiguration<nPhi>{
+            phiFV, phiTV, params_.width, params_.r0Frac};
+        while (!initBounce.negativePotentialEnergy(model_, dim_)) {
+            initBounce.width() *= 0.8;
         }
+
         // make the size of the bubble sufficiently smaller than the size of the
         // sphere. If dphi/dr at the boundary becomes too large during flow,
         // take smaller initial bounce configuration.
@@ -394,6 +384,10 @@ template <std::size_t nPhi> class BounceCalculator {
             std::cerr << "probing the size of the bounce configuration ..."
                       << std::endl;
         }
+        FieldConfiguration<nPhi> field{initBounce, dim_, params_.rMax};
+        double xTV = initBounce.r0byR();
+        double width = initBounce.width();
+
         while (evolveUntil(field,
                            params_.tend1 * params_.rMax * params_.rMax) != 0) {
             if (verbose) {
