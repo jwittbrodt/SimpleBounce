@@ -197,7 +197,7 @@ TEST_CASE("laplacian") {
 
     BENCHMARK("laplacian old") {
         const auto n = oldField.n();
-        double laplacian[n][nPhi];
+        std::vector<std::array<double, nPhi>> laplacian(n);
 
         // \nabla^2 \phi_iphi at r = r_i
         for (int i = 0; i < n - 1; i++) {

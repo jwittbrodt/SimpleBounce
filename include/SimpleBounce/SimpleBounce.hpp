@@ -215,23 +215,32 @@ template <std::size_t nPhi> class FieldConfiguration {
     // return pow(r(i), dim-1)
     double r_dminusoneth(std::size_t i) const { return rToDimMin1_[i]; }
 
-    // Laplacian in radial coordinate:
-    // \nabla^2 \phi = d^2 phi / dr^2 + (d-1)/r * dphi/dr
+    //! Compute the laplacian on the grid in radial coordinates. \f$\nabla^2\phi
+    //! = \frac{d^2 phi}{dr^2}+(dim-1)/r*\frac{d phi}{dr} \f$.
+    //!
+    //! This function is time critical and therefore highly optimized. The
+    //! laplacian for grid index zero is estimated from only two points, all
+    //! other entries use three points (the last entry is never needed and thus
+    //! not computed at all).
     std::vector<std::array<double, nPhi>> laplacian() const {
         std::vector<std::array<double, nPhi>> result(n_ - 1);
-        for (std::size_t i = 0; i != n_ - 1; ++i) {
-            for (std::size_t iPhi = 0; iPhi != nPhi; ++iPhi) {
-                if (i == 0) {
-                    result[i][iPhi] = 2 * (phi_[1][iPhi] - phi_[0][iPhi]) *
-                                      std::pow(drinv_, 2) * dim_;
-                } else {
-                    result[i][iPhi] = std::pow(drinv_, 2) *
-                                      (phi_[i + 1][iPhi] - 2 * phi_[i][iPhi] +
-                                       phi_[i - 1][iPhi] +
-                                       (phi_[i + 1][iPhi] - phi_[i - 1][iPhi]) *
-                                           (dim_ - 1) / (2 * i));
-                }
-            }
+        const double drinvSq = std::pow(drinv_, 2);
+
+        auto curr = phi_[0].begin();
+        auto next = phi_[1].begin();
+        auto out = result[0].begin();
+        while (next != phi_[1].end()) {
+            *out++ = 2 * (*next++ - *curr++) * drinvSq * dim_;
+        }
+
+        auto prev = phi_[0].begin();
+        std::size_t elemCount = nPhi;
+        const auto end = phi_.back().end();
+        while (next != end) {
+            const std::size_t i = elemCount++ / nPhi;
+            const double dimFac = (dim_ - 1) / (2. * i);
+            *out++ = drinvSq * ((1 + dimFac) * *next++ - 2 * *curr++ +
+                                (1 - dimFac) * *prev++);
         }
         return result;
     }
