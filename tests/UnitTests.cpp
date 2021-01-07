@@ -228,16 +228,19 @@ TEST_CASE("evolution") {
         // integral1 : \int_0^\infty dr r^{d-1} \sum_i (\partial V /
         // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr
         // r^{d-1} \sum_i (\partial V / \partial\phi_i)^2
-        std::vector<double> integrand1(n), integrand2(n);
-        for (int i = 0; i != n - 1; i++) {
+        auto integrand1{field.rToDimMin1()};
+        auto integrand2{field.rToDimMin1()};
+        for (int i = 0; i != n - 1; ++i) {
             std::array<double, nPhi> dvdphi;
             model.calcDvdphi(field[i], dvdphi.data());
+            auto int1Sum{0.};
             for (int iphi = 0; iphi < nPhi; iphi++) {
-                integrand1[i] +=
-                    field.r_dminusoneth(i) * dvdphi[iphi] * laplacian[i][iphi];
-                integrand2[i] +=
-                    field.r_dminusoneth(i) * dvdphi[iphi] * dvdphi[iphi];
+                int1Sum += dvdphi[iphi] * laplacian[i][iphi];
             }
+            integrand1[i] *= int1Sum;
+            integrand2[i] *= std::accumulate(
+                dvdphi.begin(), dvdphi.end(), 0.,
+                [](double sum, double x) { return sum + std::pow(x, 2); });
         }
 
         // Eq. 9 of 1907.02417

@@ -212,8 +212,8 @@ template <std::size_t nPhi> class FieldConfiguration {
     // return the lattice spacing
     double dr() const { return dr_; }
 
-    // return pow(r(i), dim-1)
-    double r_dminusoneth(std::size_t i) const { return rToDimMin1_[i]; }
+    //! The values of \f$ r^{dim - 1} \f$ on the grid.
+    std::vector<double> rToDimMin1() const { return rToDimMin1_; }
 
     //! Compute the laplacian on the grid in radial coordinates. \f$\nabla^2\phi
     //! = \frac{d^2 phi}{dr^2}+(dim-1)/r*\frac{d phi}{dr} \f$.
@@ -269,11 +269,10 @@ template <std::size_t nPhi> class FieldConfiguration {
 template <std::size_t nPhi>
 double kineticEnergy(const FieldConfiguration<nPhi> &field) {
     auto laplacian = field.laplacian();
-    std::vector<double> integrand(field.n() - 1);
-    for (int i = 0; i < field.n() - 1; i++) {
+    auto integrand{field.rToDimMin1()};
+    for (std::size_t i = 0; i != field.n() - 1; ++i) {
         for (int iphi = 0; iphi < nPhi; iphi++) {
-            integrand[i] -= field.r_dminusoneth(i) * field[i][iphi] *
-                            laplacian[i][iphi] * 0.5;
+            integrand[i] *= -0.5 * field[i][iphi] * laplacian[i][iphi];
         }
     }
     return trapezoidalIntegrate(integrand.begin(), integrand.end(), field.dr());
@@ -284,10 +283,9 @@ double kineticEnergy(const FieldConfiguration<nPhi> &field) {
 template <std::size_t nPhi, class Model>
 double potentialEnergy(const FieldConfiguration<nPhi> &field,
                        const Model *model, double zeroPot) {
-    std::vector<double> integrand(field.n());
-    for (int i = 0; i < field.n(); i++) {
-        integrand[i] =
-            field.r_dminusoneth(i) * (model->vpot(field[i]) - zeroPot);
+    auto integrand{field.rToDimMin1()};
+    for (std::size_t i = 0; i != field.n(); i++) {
+        integrand[i] *= (model->vpot(field[i]) - zeroPot);
     }
     return trapezoidalIntegrate(integrand.begin(), integrand.end(), field.dr());
 }
@@ -384,22 +382,27 @@ template <std::size_t nPhi> class BounceCalculator {
 
     // evolve the configuration by dtau
     double evolve(FieldConfiguration<nPhi> &field, double dtau) {
-        const auto n = field.n();
-        auto laplacian = field.laplacian();
+        const auto n{field.n()};
+        auto laplacian{field.laplacian()};
 
         // integral1 : \int_0^\infty dr r^{d-1} \sum_i (\partial V /
         // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr
         // r^{d-1} \sum_i (\partial V / \partial\phi_i)^2
-        std::vector<double> integrand1(n), integrand2(n);
-        for (int i = 0; i < n - 1; i++) {
+        auto integrand1{field.rToDimMin1()};
+        auto integrand2{field.rToDimMin1()};
+        for (std::size_t i = 0; i != n - 1; ++i) {
             std::array<double, nPhi> dvdphi;
             model_->calcDvdphi(field[i], dvdphi.data());
+
+            auto int1Sum{0.};
             for (int iphi = 0; iphi < nPhi; iphi++) {
-                integrand1[i] +=
-                    field.r_dminusoneth(i) * dvdphi[iphi] * laplacian[i][iphi];
-                integrand2[i] +=
-                    field.r_dminusoneth(i) * dvdphi[iphi] * dvdphi[iphi];
+                int1Sum += dvdphi[iphi] * laplacian[i][iphi];
             }
+            integrand1[i] *= int1Sum;
+
+            integrand2[i] *= std::accumulate(
+                dvdphi.begin(), dvdphi.end(), 0.,
+                [](double sum, double x) { return sum + std::pow(x, 2); });
         }
 
         // Eq. 9 of 1907.02417
