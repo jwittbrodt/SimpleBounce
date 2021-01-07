@@ -158,14 +158,11 @@ template <std::size_t nPhi> class FieldConfiguration {
     double drinv_ = 1 / dr_;
     std::vector<double> rToDimMin1_;
 
-    // radius : r_i = i * dr
-    double r(std::size_t i) const noexcept { return dr_ * i; }
-
-    // calculate pow(r(i), dim-1)
+    // calculate \f$ r_i^{dim-1} \f$
     std::vector<double> calcRToDimMin1() const {
-        std::vector<double> result(n_);
+        std::vector<double> result(n_, std::pow(dr_, dim_ - 1));
         for (std::size_t i = 0; i != n_; ++i) {
-            result[i] = pow(r(i), dim_ - 1);
+            result[i] *= std::pow(i, dim_ - 1);
         }
         return result;
     }
