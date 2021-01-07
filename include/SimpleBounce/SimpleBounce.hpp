@@ -6,37 +6,16 @@
 #include <cmath>
 #include <cstddef>
 #include <iostream>
+#include <numeric>
 #include <vector>
 
 namespace simplebounce {
 template <class It>
 double trapezoidalIntegrate(It beginValues, It endValues, double stepSize) {
-    const auto halfStepSize = stepSize / 2.;
-    auto curr = beginValues;
-    auto next = curr + 1;
-    auto result = 0.;
-    while (next != endValues) {
-        result += (*curr++ + *next++) * halfStepSize;
-    }
-    return result;
+    double borderVal = (*beginValues++ + *endValues--) / 2.;
+    return stepSize * std::accumulate(beginValues, endValues, borderVal);
 }
 
-template <class FunctionOnGrid>
-double gridTrapezoidalIntegrate(const FunctionOnGrid &f, std::size_t gridSize,
-                                double gridSpacing) {
-    const auto halfStepSize = gridSpacing * 0.5;
-    auto currValue = 0.;
-    auto nextValue = f(0);
-    auto result = 0.;
-    for (std::size_t i = 1; i != gridSize; ++i) {
-        currValue = nextValue;
-        nextValue = f(i);
-        result += (currValue + nextValue) * halfStepSize;
-    }
-    return result;
-}
-
-////////////////////////////////////////////////////////////////////////////////
 template <std::size_t nPhi> class GenericModel {
   public:
     virtual double vpot(const double *phi) const = 0;
@@ -397,15 +376,13 @@ template <std::size_t nPhi> class BounceCalculator {
     // evolve the configuration by dtau
     double evolve(FieldConfiguration<nPhi> &field, double dtau) {
         const auto n = field.n();
-        const auto laplacian = field.laplacian();
+        auto laplacian = field.laplacian();
 
         // integral1 : \int_0^\infty dr r^{d-1} \sum_i (\partial V /
         // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr
         // r^{d-1} \sum_i (\partial V / \partial\phi_i)^2
-        double integrand1[n], integrand2[n];
+        std::vector<double> integrand1(n), integrand2(n);
         for (int i = 0; i < n - 1; i++) {
-            integrand1[i] = 0.;
-            integrand2[i] = 0.;
             std::array<double, nPhi> dvdphi;
             model_->calcDvdphi(field[i], dvdphi.data());
             for (int iphi = 0; iphi < nPhi; iphi++) {
@@ -415,23 +392,21 @@ template <std::size_t nPhi> class BounceCalculator {
                     field.r_dminusoneth(i) * dvdphi[iphi] * dvdphi[iphi];
             }
         }
-        integrand1[n - 1] = 0.;
-        integrand2[n - 1] = 0.;
 
         // Eq. 9 of 1907.02417
-        lambda = trapezoidalIntegrate(&integrand1[0], &integrand1[0] + n,
+        lambda = trapezoidalIntegrate(integrand1.begin(), integrand1.end(),
                                       field.dr()) /
-                 trapezoidalIntegrate(&integrand2[0], &integrand2[0] + n,
+                 trapezoidalIntegrate(integrand2.begin(), integrand2.end(),
                                       field.dr());
 
         // RHS of Eq. 8 of 1907.02417
         // phi at boundary is fixed to phiFV and will not be updated.
-        double RHS[n][nPhi];
+        auto RHS = std::move(laplacian);
         for (int i = 0; i < n - 1; i++) {
-            double dvdphi[nPhi];
-            model_->calcDvdphi(field[i], dvdphi);
+            std::array<double, nPhi> dvdphi;
+            model_->calcDvdphi(field[i], dvdphi.data());
             for (int iphi = 0; iphi < nPhi; iphi++) {
-                RHS[i][iphi] = laplacian[i][iphi] - lambda * dvdphi[iphi];
+                RHS[i][iphi] -= lambda * dvdphi[iphi];
             }
         }
 

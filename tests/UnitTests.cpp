@@ -208,3 +208,64 @@ TEST_CASE("laplacian") {
         return laplacian;
     };
 }
+
+TEST_CASE("evolution") {
+
+    static constexpr std::size_t nPhi = 2;
+    static constexpr std::size_t dim = 4ul;
+    const auto fv = std::array<double, nPhi>{0, 0};
+    const auto tv = std::array<double, nPhi>{1, 1};
+    simplebounce::InitialBounceConfiguration<nPhi> initField{fv, tv, 0.05, 0.5};
+    simplebounce::FieldConfiguration<nPhi> field{initField, 4, 1.};
+
+    double dtau = 2. / (1. + dim + sqrt(1. + dim)) * pow(field.dr(), 2) * 0.9;
+
+    auto model = Model2();
+    BENCHMARK("first step") {
+        const auto n = field.n();
+        auto laplacian = field.laplacian();
+
+        // integral1 : \int_0^\infty dr r^{d-1} \sum_i (\partial V /
+        // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr
+        // r^{d-1} \sum_i (\partial V / \partial\phi_i)^2
+        std::vector<double> integrand1(n), integrand2(n);
+        for (int i = 0; i != n - 1; i++) {
+            std::array<double, nPhi> dvdphi;
+            model.calcDvdphi(field[i], dvdphi.data());
+            for (int iphi = 0; iphi < nPhi; iphi++) {
+                integrand1[i] +=
+                    field.r_dminusoneth(i) * dvdphi[iphi] * laplacian[i][iphi];
+                integrand2[i] +=
+                    field.r_dminusoneth(i) * dvdphi[iphi] * dvdphi[iphi];
+            }
+        }
+
+        // Eq. 9 of 1907.02417
+        auto lambda = simplebounce::trapezoidalIntegrate(
+                          integrand1.begin(), integrand1.end(), field.dr()) /
+                      simplebounce::trapezoidalIntegrate(
+                          integrand2.begin(), integrand2.end(), field.dr());
+
+        // RHS of Eq. 8 of 1907.02417
+        // phi at boundary is fixed to phiFV and will not be updated.
+        auto RHS = std::move(laplacian);
+        for (int i = 0; i < n - 1; i++) {
+            std::array<double, nPhi> dvdphi;
+            model.calcDvdphi(field[i], dvdphi.data());
+            for (int iphi = 0; iphi < nPhi; iphi++) {
+                RHS[i][iphi] -= lambda * dvdphi[iphi];
+            }
+        }
+
+        // if RHS of EOM at the origin is too big, smaller step is taken.
+        double sum = 0.;
+        for (int iphi = 0; iphi < nPhi; iphi++) {
+            sum += RHS[0][iphi] * RHS[0][iphi];
+        }
+        double dtautilde = 1e-2 * field.fieldExcursion() / sqrt(sum);
+        if (dtau < dtautilde) {
+            dtautilde = dtau;
+        }
+        return lambda;
+    };
+}
