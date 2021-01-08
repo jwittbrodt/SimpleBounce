@@ -47,7 +47,8 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
     double r0byR_;
 
     static constexpr double half = 1 / 2.;
-    static constexpr double almost1 = 1 - 1e-5;
+    static constexpr double almost0 = 1e-5;
+    static constexpr double almost1 = 1 - almost0;
 
   public:
     InitialBounceConfiguration(const std::array<double, nPhi> &phiFV,
@@ -58,6 +59,9 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
     std::array<double, nPhi> phi(double rbyR) const noexcept {
         if (rbyR > almost1) {
             return phiFV_;
+        }
+        if (rbyR < almost0) {
+            return phiTV_;
         }
         std::array<double, nPhi> res;
         for (int iphi = 0; iphi < nPhi; iphi++) {
@@ -245,8 +249,8 @@ template <std::size_t nPhi> class FieldConfiguration {
     // field excursion from the origin to the infinity
     double fieldExcursion() const {
         double normsquared = 0.;
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            normsquared += pow(phi_.back()[iphi] - phi_.front()[iphi], 2);
+        for (std::size_t iphi = 0; iphi != nPhi; ++iphi) {
+            normsquared += std::pow(phi_.back()[iphi] - phi_.front()[iphi], 2);
         }
         return sqrt(normsquared);
     }
@@ -254,8 +258,8 @@ template <std::size_t nPhi> class FieldConfiguration {
     // derivative of scalar field at boundary
     double derivativeAtBoundary() const {
         double normsquared = 0.;
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            normsquared += pow(phi_.back()[iphi] - phi_[n_ - 2][iphi], 2);
+        for (std::size_t iphi = 0; iphi != nPhi; ++iphi) {
+            normsquared += std::pow(phi_.back()[iphi] - phi_[n_ - 2][iphi], 2);
         }
         return sqrt(normsquared) * drinv_;
     }
@@ -268,9 +272,11 @@ double kineticEnergy(const FieldConfiguration<nPhi> &field) {
     auto laplacian = field.laplacian();
     auto integrand{field.rToDimMin1()};
     for (std::size_t i = 0; i != field.n() - 1; ++i) {
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            integrand[i] *= -0.5 * field[i][iphi] * laplacian[i][iphi];
+        auto phiSum{0.};
+        for (std::size_t iphi = 0; iphi != nPhi; iphi++) {
+            phiSum -= field[i][iphi] * laplacian[i][iphi];
         }
+        integrand[i] *= 0.5 * phiSum;
     }
     return trapezoidalIntegrate(integrand.begin(), integrand.end(), field.dr());
 }
@@ -281,7 +287,7 @@ template <std::size_t nPhi, class Model>
 double potentialEnergy(const FieldConfiguration<nPhi> &field,
                        const Model *model, double zeroPot) {
     auto integrand{field.rToDimMin1()};
-    for (std::size_t i = 0; i != field.n(); i++) {
+    for (std::size_t i = 0; i != field.n(); ++i) {
         integrand[i] *= (model->vpot(field[i]) - zeroPot);
     }
     return trapezoidalIntegrate(integrand.begin(), integrand.end(), field.dr());
