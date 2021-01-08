@@ -45,7 +45,10 @@ template <std::size_t nPhi> class OldFieldConfiguration {
     void setInitial(const double frac, const double width,
                     const std::array<double, nPhi> &phiFV,
                     const std::array<double, nPhi> &phiTV) {
-        for (int i = 0; i < n_ - 1; i++) {
+        for (int iphi = 0; iphi < nPhi; iphi++) {
+            phi(0, iphi) = phiTV[iphi];
+        }
+        for (int i = 1; i < n_ - 1; i++) {
             for (int iphi = 0; iphi < nPhi; iphi++) {
                 phi(i, iphi) =
                     phiTV[iphi] + (phiFV[iphi] - phiTV[iphi]) *
@@ -159,7 +162,7 @@ TEST_CASE("initial configuration") {
     CHECK(getField(60)[0] == Approx(initField.phi(60 / 99.)[0]));
     CHECK(getField(99) == initField.phi(1.));
     auto grid = initField.onGrid(100);
-    CHECK(getField(0)[0] == Approx(grid[0][0]));
+    CHECK(getField(0)[0] == grid[0][0]);
     CHECK(getField(99)[0] == Approx(grid[99][0]));
     CHECK(getField(40)[0] == Approx(grid[40][0]));
     CHECK(getField(50)[0] == Approx(grid[50][0]));
@@ -184,16 +187,24 @@ TEST_CASE("initial configuration") {
 }
 
 TEST_CASE("laplacian") {
-    static constexpr std::size_t nPhi = 2;
-    const auto fv = std::array<double, nPhi>{0, 0};
-    const auto tv = std::array<double, nPhi>{1, 1};
+    static constexpr std::size_t nPhi = 5;
+    const auto fv = std::array<double, nPhi>{0, 0, 0, 0, 0};
+    const auto tv = std::array<double, nPhi>{1, 1, 1, 1, 1};
     simplebounce::InitialBounceConfiguration<nPhi> initField{fv, tv, 0.05, 0.5};
     simplebounce::FieldConfiguration<nPhi> field{initField, 4, 1.};
 
-    BENCHMARK("laplacian new") { return field.laplacian(); };
-
-    OldFieldConfiguration<nPhi> oldField{100, 4, 1.};
+    OldFieldConfiguration<nPhi> oldField{field.n(), 4, 1.};
     oldField.setInitial(0.5, 0.05, fv, tv);
+
+    auto lap = field.laplacian();
+    for (std::size_t i = 0; i != lap.size(); ++i) {
+        for (std::size_t iPhi = 0; iPhi != nPhi; ++iPhi) {
+            INFO(i << " " << iPhi);
+            REQUIRE(lap[i][iPhi] == Approx(oldField.lap(i, iPhi)));
+        }
+    }
+
+    BENCHMARK("laplacian new") { return field.laplacian(); };
 
     BENCHMARK("laplacian old") {
         const auto n = oldField.n();
