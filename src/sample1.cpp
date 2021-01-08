@@ -1,10 +1,11 @@
 #include "SimpleBounce/SimpleBounce.hpp"
 #include <iostream>
-using namespace std;
-using namespace simplebounce;
 
-class MyModel : public GenericModel<1> {
+class MyModel {
   public:
+    // number of field degrees of freedom
+    static constexpr std::size_t nPhi = 1;
+
     // potential for scalar field(s)
     double vpot(const double *phi) const {
         return phi[0] * phi[0] / 2. - phi[0] * phi[0] * phi[0] / 3.;
@@ -17,17 +18,17 @@ class MyModel : public GenericModel<1> {
 
 int main() {
     MyModel model{};
-    BounceCalculator<1> bounce(&model);
+    auto bounce = simplebounce::makeBounceCalculator(model, 4);
     bounce.verboseOn(); // verbose mode
 
     std::array<double, 1> phiTV{10.}; // a point at which V<0
     std::array<double, 1> phiFV{0.};  // false vacuum
 
-    // calcualte the bounce solution
+    // calculate the bounce solution
     double action = bounce.solve(phiFV, phiTV);
 
     // show the Euclidean action
-    cout << "S_E = " << action << endl;
+    std::cout << "S_E = " << action << std::endl;
 
     return 0;
 }

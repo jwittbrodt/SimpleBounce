@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <iostream>
 #include <numeric>
+#include <utility>
 #include <vector>
 
 namespace simplebounce {
@@ -15,12 +16,6 @@ double trapezoidalIntegrate(It beginValues, It endValues, double stepSize) {
     double borderVal = (*beginValues++ + *endValues--) / 2.;
     return stepSize * std::accumulate(beginValues, endValues, borderVal);
 }
-
-template <std::size_t nPhi> class GenericModel {
-  public:
-    virtual double vpot(const double *phi) const = 0;
-    virtual void calcDvdphi(const double *phi, double *dvdphi) const = 0;
-};
 
 struct Parameters {
     // initial grid size
@@ -102,16 +97,15 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
     //! Returns true if the the resulting value is significantly less than
     //! maxVal.
     template <class Model>
-    bool negativePotentialEnergy(const Model *model,
+    bool negativePotentialEnergy(const Model &model,
                                  std::size_t dim) const noexcept {
         static constexpr std::size_t maxRefinements = 10;
         static constexpr double margin = 5;
         static constexpr double maxVal = -1e-5;
 
-        const double zeroPot = model->vpot(phiFV_.data());
+        const double zeroPot = model.vpot(phiFV_.data());
         const auto integrand = [dim, zeroPot, model, this](double r) {
-            return std::pow(r, dim - 1) *
-                   (model->vpot(phi(r).data()) - zeroPot);
+            return std::pow(r, dim - 1) * (model.vpot(phi(r).data()) - zeroPot);
         };
 
         // the integrand vanishes at the endpoints by construction
@@ -283,29 +277,32 @@ double kineticEnergy(const FieldConfiguration<nPhi> &field) {
 
 // potential energy of the configuration
 // \int_0^\infty dr r^{d-1} V(\phi)
-template <std::size_t nPhi, class Model>
-double potentialEnergy(const FieldConfiguration<nPhi> &field,
-                       const Model *model, double zeroPot) {
+template <class Model>
+double potentialEnergy(const FieldConfiguration<Model::nPhi> &field,
+                       const Model &model, double zeroPot) {
     auto integrand{field.rToDimMin1()};
     for (std::size_t i = 0; i != field.n(); ++i) {
-        integrand[i] *= (model->vpot(field[i]) - zeroPot);
+        integrand[i] *= (model.vpot(field[i]) - zeroPot);
     }
     return trapezoidalIntegrate(integrand.begin(), integrand.end(), field.dr());
 }
 
-template <std::size_t nPhi> class BounceCalculator {
+template <class Model> class BounceCalculator {
+  public:
+    static constexpr std::size_t nPhi = Model::nPhi;
+
   private:
     Parameters params_;
     std::size_t dim_;
 
     double lambda;
 
-    GenericModel<nPhi> *model_;
+    const Model &model_;
     double VFV;
     bool verbose = false;
 
   public:
-    BounceCalculator(GenericModel<nPhi> *model, std::size_t dim = 4,
+    BounceCalculator(const Model &model, std::size_t dim,
                      Parameters params = {})
         : params_{params}, dim_{dim}, model_{model} {}
 
@@ -313,13 +310,13 @@ template <std::size_t nPhi> class BounceCalculator {
     // See Fig. 1 of the manual
     double solve(const std::array<double, nPhi> &phiFV,
                  const std::array<double, nPhi> &phiTV) {
-        if (model_->vpot(phiTV.data()) > model_->vpot(phiFV.data())) {
+        VFV = model_.vpot(phiFV.data());
+        if (model_.vpot(phiTV.data()) > VFV) {
             std::cerr << "!!! energy of true vacuum is larger than false "
                          "vacuum !!!"
                       << std::endl;
             return -1;
         }
-        VFV = model_->vpot(phiFV.data());
 
         // make the bubble wall thin to get negative potential energy
         // if V is positive, make the wall thin.
@@ -395,7 +392,7 @@ template <std::size_t nPhi> class BounceCalculator {
         auto integrand2{field.rToDimMin1()};
         for (std::size_t i = 0; i != n - 1; ++i) {
             std::array<double, nPhi> dvdphi;
-            model_->calcDvdphi(field[i], dvdphi.data());
+            model_.calcDvdphi(field[i], dvdphi.data());
 
             auto int1Sum{0.};
             for (int iphi = 0; iphi < nPhi; iphi++) {
@@ -419,7 +416,7 @@ template <std::size_t nPhi> class BounceCalculator {
         auto RHS = std::move(laplacian);
         for (int i = 0; i < n - 1; i++) {
             std::array<double, nPhi> dvdphi;
-            model_->calcDvdphi(field[i], dvdphi.data());
+            model_.calcDvdphi(field[i], dvdphi.data());
             for (int iphi = 0; iphi < nPhi; iphi++) {
                 RHS[i][iphi] -= lambda * dvdphi[iphi];
             }
@@ -473,5 +470,10 @@ template <std::size_t nPhi> class BounceCalculator {
     // turn off verbose mode
     void verboseOff() { verbose = false; }
 };
+
+template <class Model, typename... Args>
+auto makeBounceCalculator(const Model &model, std::size_t dim, Args... args) {
+    return BounceCalculator<Model>{model, dim, std::forward<Args>(args)...};
+}
 
 } // namespace simplebounce

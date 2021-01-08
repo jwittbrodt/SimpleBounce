@@ -233,8 +233,8 @@ TEST_CASE("evolution") {
 
     auto model = Model2();
     BENCHMARK("first step") {
-        const auto n = field.n();
-        auto laplacian = field.laplacian();
+        const auto n{field.n()};
+        auto laplacian{field.laplacian()};
 
         // integral1 : \int_0^\infty dr r^{d-1} \sum_i (\partial V /
         // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr
@@ -249,6 +249,7 @@ TEST_CASE("evolution") {
                 int1Sum += dvdphi[iphi] * laplacian[i][iphi];
             }
             integrand1[i] *= int1Sum;
+
             integrand2[i] *= std::accumulate(
                 dvdphi.begin(), dvdphi.end(), 0.,
                 [](double sum, double x) { return sum + std::pow(x, 2); });
@@ -280,6 +281,15 @@ TEST_CASE("evolution") {
         if (dtau < dtautilde) {
             dtautilde = dtau;
         }
+
+        // flow by Eq. 8 of 1907.02417
+        // phi at boundary is fixed to phiFV and will not be updated.
+        // for (int i = 0; i < n - 1; i++) {
+        //     for (int iphi = 0; iphi < nPhi; iphi++) {
+        //         field[i][iphi] += dtautilde * RHS[i][iphi];
+        //     }
+        // }
+
         return lambda;
     };
 }

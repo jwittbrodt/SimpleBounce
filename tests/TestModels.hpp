@@ -1,7 +1,8 @@
 #include "SimpleBounce/SimpleBounce.hpp"
 
-class Model1 : public simplebounce::GenericModel<1> {
+class Model1 {
   public:
+    static constexpr std::size_t nPhi = 1;
     double vpot(const double *phi) const {
         return (phi[0] * phi[0] * phi[0] * phi[0] -
                 8. * phi[0] * phi[0] * phi[0] + 10. * phi[0] * phi[0]) /
@@ -13,8 +14,9 @@ class Model1 : public simplebounce::GenericModel<1> {
     }
 };
 
-class Model1a : public simplebounce::GenericModel<1> {
+class Model1a {
   public:
+    static constexpr std::size_t nPhi = 1;
     static constexpr double c = 0.47;
     double vpot(const double *phi) const {
         return phi[0] * phi[0] * phi[0] * phi[0] / 4. -
@@ -27,8 +29,9 @@ class Model1a : public simplebounce::GenericModel<1> {
     }
 };
 
-class Model1b : public simplebounce::GenericModel<1> {
+class Model1b {
   public:
+    static constexpr std::size_t nPhi = 1;
     static constexpr double c = 0.2;
     double vpot(const double *phi) const {
         return phi[0] * phi[0] * phi[0] * phi[0] / 4. -
@@ -41,13 +44,13 @@ class Model1b : public simplebounce::GenericModel<1> {
     }
 };
 
-class Model2 : public simplebounce::GenericModel<2> {
+class Model2 {
   public:
+    static constexpr std::size_t nPhi = 2;
     static constexpr double c0 = 1.8;
     static constexpr double c1 = 0.2;
     static constexpr double c2 = 0.3;
 
-    // potential of scalar field(s)
     double vpot(const double *phi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.));
@@ -55,7 +58,6 @@ class Model2 : public simplebounce::GenericModel<2> {
         return (r1 - c2) * r2;
     }
 
-    // derivative of potential of scalar field(s)
     void calcDvdphi(const double *phi, double *dvdphi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.));
@@ -65,11 +67,11 @@ class Model2 : public simplebounce::GenericModel<2> {
     }
 };
 
-class Model2a : public simplebounce::GenericModel<2> {
+class Model2a {
   public:
+    static constexpr std::size_t nPhi = 2;
     static constexpr double c = 2.;
 
-    // potential of scalar field(s)
     double vpot(const double *phi) const {
         double r1 = phi[0] * phi[0] + 5. * phi[1] * phi[1];
         double r2 =
@@ -79,7 +81,6 @@ class Model2a : public simplebounce::GenericModel<2> {
         return r1 * r2 + r3;
     }
 
-    // derivative of potential of scalar field(s)
     void calcDvdphi(const double *phi, double *dvdphi) const {
         double r1 = phi[0] * phi[0] + 5. * phi[1] * phi[1];
         double r2 =
@@ -94,11 +95,10 @@ class Model2a : public simplebounce::GenericModel<2> {
     }
 };
 
-class Model2b : public simplebounce::GenericModel<2> {
+class Model2b {
   public:
+    static constexpr std::size_t nPhi = 2;
     static constexpr double c = 80.;
-
-    // potential of scalar field(s)
     double vpot(const double *phi) const {
         double r1 = phi[0] * phi[0] + 5. * phi[1] * phi[1];
         double r2 =
@@ -107,8 +107,6 @@ class Model2b : public simplebounce::GenericModel<2> {
                          phi[1] * phi[1] * phi[1] / 3.);
         return r1 * r2 + r3;
     }
-
-    // derivative of potential of scalar field(s)
     void calcDvdphi(const double *phi, double *dvdphi) const {
         double r1 = phi[0] * phi[0] + 5. * phi[1] * phi[1];
         double r2 =
@@ -123,14 +121,14 @@ class Model2b : public simplebounce::GenericModel<2> {
     }
 };
 
-class Model3 : public simplebounce::GenericModel<3> {
+class Model3 {
   public:
+    static constexpr std::size_t nPhi = 3;
     static constexpr double c0 = 0.684373;
     static constexpr double c1 = 0.181928;
     static constexpr double c2 = 0.295089;
     static constexpr double c3 = 0.284821;
 
-    // potential of scalar field(s)
     double vpot(const double *phi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
@@ -139,7 +137,6 @@ class Model3 : public simplebounce::GenericModel<3> {
         return (r1 - c3) * r2;
     }
 
-    // derivative of potential of scalar field(s)
     void calcDvdphi(const double *phi, double *dvdphi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
@@ -151,15 +148,16 @@ class Model3 : public simplebounce::GenericModel<3> {
     }
 };
 
-class Model4 : public simplebounce::GenericModel<4> {
+class Model4 {
   public:
+    static constexpr std::size_t nPhi = 4;
+
     static constexpr double c0 = 0.534808;
     static constexpr double c1 = 0.77023;
     static constexpr double c2 = 0.838912;
     static constexpr double c3 = 0.00517238;
     static constexpr double c4 = 0.258889;
 
-    // potential of scalar field(s)
     double vpot(const double *phi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
@@ -170,7 +168,6 @@ class Model4 : public simplebounce::GenericModel<4> {
         return (r1 - c4) * r2;
     }
 
-    // derivative of potential of scalar field(s)
     void calcDvdphi(const double *phi, double *dvdphi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
@@ -185,8 +182,10 @@ class Model4 : public simplebounce::GenericModel<4> {
     }
 };
 
-class Model5 : public simplebounce::GenericModel<5> {
+class Model5 {
   public:
+    static constexpr std::size_t nPhi = 5;
+
     static constexpr double c0 = 0.4747;
     static constexpr double c1 = 0.234808;
     static constexpr double c2 = 0.57023;
@@ -194,7 +193,6 @@ class Model5 : public simplebounce::GenericModel<5> {
     static constexpr double c4 = 0.517238;
     static constexpr double c5 = 0.658889;
 
-    // potential of scalar field(s)
     double vpot(const double *phi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
@@ -206,7 +204,6 @@ class Model5 : public simplebounce::GenericModel<5> {
         return (r1 - c5) * r2;
     }
 
-    // derivative of potential of scalar field(s)
     void calcDvdphi(const double *phi, double *dvdphi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
@@ -223,8 +220,10 @@ class Model5 : public simplebounce::GenericModel<5> {
     }
 };
 
-class Model6 : public simplebounce::GenericModel<6> {
+class Model6 {
   public:
+    static constexpr std::size_t nPhi = 6;
+
     static constexpr double c0 = 0.34234;
     static constexpr double c1 = 0.4747;
     static constexpr double c2 = 0.234808;
@@ -233,7 +232,6 @@ class Model6 : public simplebounce::GenericModel<6> {
     static constexpr double c5 = 0.517238;
     static constexpr double c6 = 0.658889;
 
-    // potential of scalar field(s)
     double vpot(const double *phi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
@@ -246,7 +244,6 @@ class Model6 : public simplebounce::GenericModel<6> {
         return (r1 - c6) * r2;
     }
 
-    // derivative of potential of scalar field(s)
     void calcDvdphi(const double *phi, double *dvdphi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
@@ -265,8 +262,10 @@ class Model6 : public simplebounce::GenericModel<6> {
     }
 };
 
-class Model7 : public simplebounce::GenericModel<7> {
+class Model7 {
   public:
+    static constexpr std::size_t nPhi = 7;
+
     static constexpr double c0 = 0.5233;
     static constexpr double c1 = 0.34234;
     static constexpr double c2 = 0.4747;
@@ -276,7 +275,6 @@ class Model7 : public simplebounce::GenericModel<7> {
     static constexpr double c6 = 0.517238;
     static constexpr double c7 = 0.65889;
 
-    // potential of scalar field(s)
     double vpot(const double *phi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
@@ -291,7 +289,6 @@ class Model7 : public simplebounce::GenericModel<7> {
         return (r1 - c7) * r2;
     }
 
-    // derivative of potential of scalar field(s)
     void calcDvdphi(const double *phi, double *dvdphi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
@@ -313,8 +310,10 @@ class Model7 : public simplebounce::GenericModel<7> {
     }
 };
 
-class Model8 : public simplebounce::GenericModel<8> {
+class Model8 {
   public:
+    static constexpr std::size_t nPhi = 8;
+
     static constexpr double c0 = 0.2434;
     static constexpr double c1 = 0.5233;
     static constexpr double c2 = 0.34234;
@@ -325,7 +324,6 @@ class Model8 : public simplebounce::GenericModel<8> {
     static constexpr double c7 = 0.51723;
     static constexpr double c8 = 0.658889;
 
-    // potential of scalar field(s)
     double vpot(const double *phi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
@@ -341,7 +339,6 @@ class Model8 : public simplebounce::GenericModel<8> {
         return (r1 - c8) * r2;
     }
 
-    // derivative of potential of scalar field(s)
     void calcDvdphi(const double *phi, double *dvdphi) const {
         double r1 = (c0 * (phi[0] - 1.) * (phi[0] - 1.) +
                      c1 * (phi[1] - 1.) * (phi[1] - 1.) +
