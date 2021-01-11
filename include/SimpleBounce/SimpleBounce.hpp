@@ -11,11 +11,28 @@
 #include <vector>
 
 namespace simplebounce {
+
+namespace Detail {
+
+const auto squaredSum = [](double sum, double x) {
+    return sum + std::pow(x, 2);
+};
+
 template <class It>
 double trapezoidalIntegrate(It beginValues, It endValues, double stepSize) {
     double borderVal = (*beginValues++ + *endValues--) / 2.;
     return stepSize * std::accumulate(beginValues, endValues, borderVal);
 }
+
+//! Computes the euclidean vector norm \f$ | \vec{x1} - \vec{x2} | \f$.
+template <std::size_t n>
+double normDifference(const std::array<double, n> &x1,
+                      const std::array<double, n> &x2) {
+    return std::sqrt(std::inner_product(x1.begin(), x1.end(), x2.begin(), 0.,
+                                        Detail::squaredSum,
+                                        std::minus<double>{}));
+}
+} // namespace Detail
 
 struct Parameters {
     // initial grid size
@@ -35,6 +52,8 @@ struct Parameters {
     double tend1 = 0.4;
 };
 
+template <std::size_t nPhi> class FieldConfiguration;
+
 template <std::size_t nPhi> class InitialBounceConfiguration {
     std::array<double, nPhi> phiFV_;
     std::array<double, nPhi> phiTV_;
@@ -42,7 +61,7 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
     double r0byR_;
 
     static constexpr double half = 1 / 2.;
-    static constexpr double almost0 = 1e-5;
+    static constexpr double almost0 = 0.1 / FieldConfiguration<nPhi>::maxN;
     static constexpr double almost1 = 1 - almost0;
 
   public:
@@ -58,12 +77,14 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
         if (rbyR < almost0) {
             return phiTV_;
         }
+        const auto interpolatingField =
+            [scaleFac = (1. + std::tanh((rbyR - r0byR_) / width_)) *
+                        half](double phiT, double phiF) {
+                return phiT + scaleFac * (phiF - phiT);
+            };
         std::array<double, nPhi> res;
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            res[iphi] =
-                phiTV_[iphi] + (phiFV_[iphi] - phiTV_[iphi]) *
-                                   (1. + tanh((rbyR - r0byR_) / width_)) * half;
-        }
+        std::transform(phiTV_.begin(), phiTV_.end(), phiFV_.begin(),
+                       res.begin(), interpolatingField);
         return res;
     }
 
@@ -94,7 +115,7 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
     //! boost::math::quadrature::trapezoidal to perform the \f$r\f$ integral
     //! from 0 to 1. Stops the integration as soon as the absolute value is
     //! larger than margin * the integration error or after maxRefinements.
-    //! Returns true if the the resulting value is significantly less than
+    //! Returns true if the resulting value is significantly less than
     //! maxVal.
     template <class Model>
     bool negativePotentialEnergy(const Model &model,
@@ -114,13 +135,8 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
         auto I1 = integrand(h) * h;
 
         // The recursion is:
-        // I_k = 1/2 I_{k-1} + 1/2^k \sum_{j=1; j odd, j < 2^k} f(a +
-        // j(b-a)/2^k)
+        // I_k = 1/2 I_{k-1} + 1/2^k \sum_{j=1; j odd, j < 2^k} f(a+j(b-a)/2^k)
         auto k = 2ul;
-        // We want to go through at least 4 levels so we have sampled the
-        // function at least 10 times. Otherwise, we could terminate prematurely
-        // and miss essential features. This is of course possible anyway, but
-        // 10 samples seems to be a reasonable compromise.
         auto error = std::abs(I0 - I1);
         while (k < 4 || (k < maxRefinements && margin * error > std::abs(I1))) {
             I0 = I1;
@@ -176,8 +192,10 @@ template <std::size_t nPhi> class FieldConfiguration {
     }
 
   public:
-    double *operator[](std::size_t i) { return phi_[i].data(); }
-    const double *operator[](std::size_t i) const { return phi_[i].data(); }
+    std::array<double, nPhi> &operator[](std::size_t i) { return phi_[i]; }
+    const std::array<double, nPhi> &operator[](std::size_t i) const {
+        return phi_[i];
+    }
 
     FieldConfiguration(const InitialBounceConfiguration<nPhi> &initBounce,
                        std::size_t dim, double rMax)
@@ -208,7 +226,7 @@ template <std::size_t nPhi> class FieldConfiguration {
     double dr() const { return dr_; }
 
     //! The values of \f$ r^{dim - 1} \f$ on the grid.
-    std::vector<double> rToDimMin1() const { return rToDimMin1_; }
+    const std::vector<double> &rToDimMin1() const { return rToDimMin1_; }
 
     //! Compute the laplacian on the grid in radial coordinates. \f$\nabla^2\phi
     //! = \frac{d^2 phi}{dr^2}+(dim-1)/r*\frac{d phi}{dr} \f$.
@@ -240,22 +258,26 @@ template <std::size_t nPhi> class FieldConfiguration {
         return result;
     }
 
+    template <class Model>
+    std::vector<std::array<double, nPhi>> dVdphi(const Model &model) {
+        static_assert(Model::nPhi == nPhi, "field dimensions must match");
+        std::vector<std::array<double, nPhi>> result(n_);
+        auto phi = phi_.begin(), res = result.begin();
+        const auto endRes = result.end();
+        while (res != endRes) {
+            model.calcDvdphi((phi++)->data(), (res++)->data());
+        }
+        return result;
+    }
+
     // field excursion from the origin to the infinity
     double fieldExcursion() const {
-        double normsquared = 0.;
-        for (std::size_t iphi = 0; iphi != nPhi; ++iphi) {
-            normsquared += std::pow(phi_.back()[iphi] - phi_.front()[iphi], 2);
-        }
-        return sqrt(normsquared);
+        return Detail::normDifference(phi_.back(), phi_.front());
     }
 
     // derivative of scalar field at boundary
     double derivativeAtBoundary() const {
-        double normsquared = 0.;
-        for (std::size_t iphi = 0; iphi != nPhi; ++iphi) {
-            normsquared += std::pow(phi_.back()[iphi] - phi_[n_ - 2][iphi], 2);
-        }
-        return sqrt(normsquared) * drinv_;
+        return drinv_ * Detail::normDifference(phi_.back(), phi_[n_ - 2]);
     }
 };
 
@@ -263,16 +285,15 @@ template <std::size_t nPhi> class FieldConfiguration {
 // \int_0^\infty dr r^{d-1} \sum_i (-1/2) \phi_i \nabla^2\phi_i
 template <std::size_t nPhi>
 double kineticEnergy(const FieldConfiguration<nPhi> &field) {
-    auto laplacian = field.laplacian();
+    auto laplacian{field.laplacian()};
     auto integrand{field.rToDimMin1()};
     for (std::size_t i = 0; i != field.n() - 1; ++i) {
-        auto phiSum{0.};
-        for (std::size_t iphi = 0; iphi != nPhi; iphi++) {
-            phiSum -= field[i][iphi] * laplacian[i][iphi];
-        }
-        integrand[i] *= 0.5 * phiSum;
+        integrand[i] *=
+            -0.5 * std::inner_product(field[i].begin(), field[i].end(),
+                                      laplacian[i].begin(), 0.);
     }
-    return trapezoidalIntegrate(integrand.begin(), integrand.end(), field.dr());
+    return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
+                                        field.dr());
 }
 
 // potential energy of the configuration
@@ -282,9 +303,10 @@ double potentialEnergy(const FieldConfiguration<Model::nPhi> &field,
                        const Model &model, double zeroPot) {
     auto integrand{field.rToDimMin1()};
     for (std::size_t i = 0; i != field.n(); ++i) {
-        integrand[i] *= (model.vpot(field[i]) - zeroPot);
+        integrand[i] *= (model.vpot(field[i].data()) - zeroPot);
     }
-    return trapezoidalIntegrate(integrand.begin(), integrand.end(), field.dr());
+    return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
+                                        field.dr());
 }
 
 template <class Model> class BounceCalculator {
@@ -300,6 +322,63 @@ template <class Model> class BounceCalculator {
     const Model &model_;
     double VFV;
     bool verbose = false;
+
+    //! Calculate \f$\lambda\f$ according to Eq. (5) of 1908.10868
+    double computeLambda(const std::vector<std::array<double, nPhi>> &laplacian,
+                         const std::vector<std::array<double, nPhi>> &dVdphi,
+                         const std::vector<double> &rToDimMin1,
+                         double gridSpacing) {
+        auto integrand1{rToDimMin1};
+        auto integrand2{rToDimMin1};
+
+        auto i1{integrand1.begin()}, i2{integrand2.begin()};
+        auto lap{laplacian.begin()}, dV{dVdphi.begin()};
+        while (i1 != integrand1.end()) {
+            *i1++ *=
+                std::inner_product(dV->begin(), dV->end(), lap->begin(), 0.);
+            *i2++ *=
+                std::accumulate(dV->begin(), dV->end(), 0., Detail::squaredSum);
+            ++lap;
+            ++dV;
+        }
+        return Detail::trapezoidalIntegrate(integrand1.begin(),
+                                            integrand1.end(), gridSpacing) /
+               Detail::trapezoidalIntegrate(integrand2.begin(),
+                                            integrand2.end(), gridSpacing);
+    };
+
+    //! Calculate the bracketed part of the RHS of Eq. (10) of 1908.10868.
+    std::vector<std::array<double, nPhi>>
+    computeRhs(std::vector<std::array<double, nPhi>> &&laplacian,
+               const std::vector<std::array<double, nPhi>> &dVdphi,
+               double lambda) {
+        auto iRhs{laplacian.front().begin()};
+        const auto endRhs{laplacian.back().end()};
+        auto dV{dVdphi.front().begin()};
+        while (iRhs != endRhs) {
+            *iRhs++ -= lambda * *dV++;
+        }
+        return std::move(laplacian);
+    }
+
+    //! Perform a flow step for the field as in Eq. (10) of 1908.10868.
+    //! The field value at boundary is fixed to phiFV and will not be updated.
+    //! If the RHS of the EOM at the origin is too big a smaller step is taken.
+    void performFlowStep(FieldConfiguration<nPhi> &field, double dTau,
+                         const std::vector<std::array<double, nPhi>> &RHS) {
+        const auto normAtOrigin{std::sqrt(std::accumulate(
+            RHS.front().begin(), RHS.front().end(), 0., Detail::squaredSum))};
+        const auto dtautilde{
+            std::min(dTau, params_.maximumvariation * field.fieldExcursion() /
+                               normAtOrigin)};
+
+        auto iRhs{RHS.front().begin()};
+        const auto endRhs{RHS.back().end()};
+        auto f{field[0].begin()};
+        while (iRhs != endRhs) {
+            *f++ += dtautilde * *iRhs++;
+        }
+    }
 
   public:
     BounceCalculator(const Model &model, std::size_t dim,
@@ -382,65 +461,12 @@ template <class Model> class BounceCalculator {
 
     // evolve the configuration by dtau
     double evolve(FieldConfiguration<nPhi> &field, double dtau) {
-        const auto n{field.n()};
         auto laplacian{field.laplacian()};
-
-        // integral1 : \int_0^\infty dr r^{d-1} \sum_i (\partial V /
-        // \partial\phi_i) \nabla^2\phi_i integral2 : \int_0^\infty dr
-        // r^{d-1} \sum_i (\partial V / \partial\phi_i)^2
-        auto integrand1{field.rToDimMin1()};
-        auto integrand2{field.rToDimMin1()};
-        for (std::size_t i = 0; i != n - 1; ++i) {
-            std::array<double, nPhi> dvdphi;
-            model_.calcDvdphi(field[i], dvdphi.data());
-
-            auto int1Sum{0.};
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                int1Sum += dvdphi[iphi] * laplacian[i][iphi];
-            }
-            integrand1[i] *= int1Sum;
-
-            integrand2[i] *= std::accumulate(
-                dvdphi.begin(), dvdphi.end(), 0.,
-                [](double sum, double x) { return sum + std::pow(x, 2); });
-        }
-
-        // Eq. 9 of 1907.02417
-        lambda = trapezoidalIntegrate(integrand1.begin(), integrand1.end(),
-                                      field.dr()) /
-                 trapezoidalIntegrate(integrand2.begin(), integrand2.end(),
-                                      field.dr());
-
-        // RHS of Eq. 8 of 1907.02417
-        // phi at boundary is fixed to phiFV and will not be updated.
-        auto RHS = std::move(laplacian);
-        for (int i = 0; i < n - 1; i++) {
-            std::array<double, nPhi> dvdphi;
-            model_.calcDvdphi(field[i], dvdphi.data());
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                RHS[i][iphi] -= lambda * dvdphi[iphi];
-            }
-        }
-
-        // if RHS of EOM at the origin is too big, smaller step is taken.
-        double sum = 0.;
-        for (int iphi = 0; iphi < nPhi; iphi++) {
-            sum += RHS[0][iphi] * RHS[0][iphi];
-        }
-        double dtautilde =
-            params_.maximumvariation * field.fieldExcursion() / sqrt(sum);
-        if (dtau < dtautilde) {
-            dtautilde = dtau;
-        }
-
-        // flow by Eq. 8 of 1907.02417
-        // phi at boundary is fixed to phiFV and will not be updated.
-        for (int i = 0; i < n - 1; i++) {
-            for (int iphi = 0; iphi < nPhi; iphi++) {
-                field[i][iphi] += dtautilde * RHS[i][iphi];
-            }
-        }
-
+        const auto dVdphi{field.dVdphi(model_)};
+        lambda =
+            computeLambda(laplacian, dVdphi, field.rToDimMin1(), field.dr());
+        const auto RHS = computeRhs(std::move(laplacian), dVdphi, lambda);
+        performFlowStep(field, dtau, RHS);
         return lambda;
     }
 
