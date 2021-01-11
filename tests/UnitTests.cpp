@@ -193,7 +193,7 @@ TEST_CASE("laplacian") {
     simplebounce::InitialBounceConfiguration<nPhi> initField{fv, tv, 0.05, 0.5};
     simplebounce::FieldConfiguration<nPhi> field{initField, 4, 1.};
 
-    OldFieldConfiguration<nPhi> oldField{field.n(), 4, 1.};
+    OldFieldConfiguration<nPhi> oldField{100, 4, 1.};
     oldField.setInitial(0.5, 0.05, fv, tv);
 
     auto lap = field.laplacian();

@@ -1,3 +1,4 @@
+#define SIMPLEBOUNCE_VERBOSE
 #include "SimpleBounce/SimpleBounce.hpp"
 #include <iostream>
 
@@ -19,7 +20,6 @@ class MyModel {
 int main() {
     MyModel model{};
     auto bounce = simplebounce::makeBounceCalculator(model, 4);
-    bounce.verboseOn(); // verbose mode
 
     std::array<double, 1> phiTV{10.}; // a point at which V<0
     std::array<double, 1> phiFV{0.};  // false vacuum

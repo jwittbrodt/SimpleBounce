@@ -18,12 +18,14 @@ namespace simplebounce {
 
 namespace Detail {
 
-const auto squaredSum = [](double sum, double x) {
+const auto squaredSum = [](double sum, double x) noexcept {
     return sum + std::pow(x, 2);
 };
 
-template <class It>
-double trapezoidalIntegrate(It beginValues, It endValues, double stepSize) {
+template <class BidirectionalIterator>
+double trapezoidalIntegrate(BidirectionalIterator beginValues,
+                            BidirectionalIterator endValues,
+                            double stepSize) noexcept {
     double borderVal = (*beginValues++ + *endValues--) / 2.;
     return stepSize * std::accumulate(beginValues, endValues, borderVal);
 }
@@ -31,7 +33,7 @@ double trapezoidalIntegrate(It beginValues, It endValues, double stepSize) {
 //! Computes the euclidean vector norm \f$ | \vec{x1} - \vec{x2} | \f$.
 template <std::size_t n>
 double normDifference(const std::array<double, n> &x1,
-                      const std::array<double, n> &x2) {
+                      const std::array<double, n> &x2) noexcept {
     return std::sqrt(std::inner_product(x1.begin(), x1.end(), x2.begin(), 0.,
                                         Detail::squaredSum,
                                         std::minus<double>{}));
@@ -71,7 +73,7 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
   public:
     InitialBounceConfiguration(const std::array<double, nPhi> &phiFV,
                                const std::array<double, nPhi> &phiTV,
-                               double width, double r0byR)
+                               double width, double r0byR) noexcept
         : phiFV_{phiFV}, phiTV_{phiTV}, width_{width}, r0byR_{r0byR} {}
 
     std::array<double, nPhi> phi(double rbyR) const noexcept {
@@ -92,13 +94,13 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
         return res;
     }
 
-    std::vector<std::array<double, nPhi>> onGrid(std::size_t n) const {
+    std::vector<std::array<double, nPhi>> onGrid(std::size_t n) const noexcept {
         auto phiGrid = std::vector<std::array<double, nPhi>>(n);
         onGrid(phiGrid);
         return phiGrid;
     }
 
-    void onGrid(std::vector<std::array<double, nPhi>> &grid) const {
+    void onGrid(std::vector<std::array<double, nPhi>> &grid) const noexcept {
         const auto n = grid.size();
         grid.front() = phiTV_;
         const auto delta = 1. / static_cast<double>(n - 1);
@@ -122,8 +124,8 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
     //! Returns true if the resulting value is significantly less than
     //! maxVal.
     template <class Model>
-    bool negativePotentialEnergy(const Model &model,
-                                 std::size_t dim) const noexcept {
+    bool negativePotentialEnergy(const Model &model, std::size_t dim) const
+        noexcept(noexcept(model.vpot(std::declval<double *>()))) {
         static constexpr std::size_t maxRefinements = 10;
         static constexpr double margin = 5;
         static constexpr double maxVal = -1e-5;
@@ -166,27 +168,28 @@ template <std::size_t nPhi> class FieldConfiguration {
     static constexpr std::size_t maxN = 1000;
 
   private:
-    std::size_t n_, dim_;
+    std::size_t dim_;
     double rMax_;
     std::vector<std::array<double, nPhi>> phi_;
     std::array<double, nPhi> phiFV_;
     std::array<double, nPhi> phiTV_;
 
-    double dr_ = rMax_ / (n_ - 1);
+    double dr_ = rMax_ / (phi_.size() - 1);
     double drinv_ = 1 / dr_;
     std::vector<double> rToDimMin1_;
 
     // calculate \f$ r_i^{dim-1} \f$
-    std::vector<double> calcRToDimMin1() const {
-        std::vector<double> result(n_, std::pow(dr_, dim_ - 1));
-        for (std::size_t i = 0; i != n_; ++i) {
-            result[i] *= std::pow(i, dim_ - 1);
+    std::vector<double> calcRToDimMin1() const noexcept {
+        std::vector<double> result(phi_.size(), std::pow(dr_, dim_ - 1));
+        std::size_t i{0};
+        for (auto &r : result) {
+            r *= std::pow(i++, dim_ - 1);
         }
         return result;
     }
 
-    std::size_t
-    determineGridSize(const InitialBounceConfiguration<nPhi> &initBounce) {
+    std::size_t determineGridSize(
+        const InitialBounceConfiguration<nPhi> &initBounce) const {
         const auto n = std::max(
             std::size_t{100}, static_cast<std::size_t>(1 / initBounce.width()));
         if (n > maxN) {
@@ -196,41 +199,44 @@ template <std::size_t nPhi> class FieldConfiguration {
     }
 
   public:
-    std::array<double, nPhi> &operator[](std::size_t i) { return phi_[i]; }
-    const std::array<double, nPhi> &operator[](std::size_t i) const {
+    auto begin() const noexcept { return phi_.begin(); }
+    auto end() const noexcept { return phi_.end(); }
+    std::array<double, nPhi> &operator[](std::size_t i) noexcept {
+        return phi_[i];
+    }
+    const std::array<double, nPhi> &operator[](std::size_t i) const noexcept {
         return phi_[i];
     }
 
     FieldConfiguration(const InitialBounceConfiguration<nPhi> &initBounce,
                        std::size_t dim, double rMax)
-        : n_{determineGridSize(initBounce)}, dim_{dim}, rMax_{rMax},
-          phi_{initBounce.onGrid(n_)}, phiFV_{initBounce.phi(1.)},
-          phiTV_{initBounce.phi(0.)}, rToDimMin1_{calcRToDimMin1()} {}
+        : dim_{dim}, rMax_{rMax}, phi_{initBounce.onGrid(
+                                      determineGridSize(initBounce))},
+          phiFV_{initBounce.phi(1.)}, phiTV_{initBounce.phi(0.)},
+          rToDimMin1_{calcRToDimMin1()} {}
 
     void
     resetInitialBounce(const InitialBounceConfiguration<nPhi> &initBounce) {
         auto n = determineGridSize(initBounce);
-        if (n_ != n) {
-            n_ = n;
-            phi_.resize(n_);
-            dr_ = rMax_ / (n_ - 1.);
+        if (phi_.size() != n) {
+            phi_.resize(n);
+            dr_ = rMax_ / (n - 1.);
             drinv_ = 1. / dr_;
             rToDimMin1_ = calcRToDimMin1();
         }
         initBounce.onGrid(phi_);
     }
 
-    // return the number of the grid
-    std::size_t n() const { return n_; }
-
     // return the dimension of space
-    std::size_t dim() const { return dim_; }
+    std::size_t dim() const noexcept { return dim_; }
 
-    // return the lattice spacing
-    double dr() const { return dr_; }
+    //! The grid spacing
+    double dr() const noexcept { return dr_; }
 
     //! The values of \f$ r^{dim - 1} \f$ on the grid.
-    const std::vector<double> &rToDimMin1() const { return rToDimMin1_; }
+    const std::vector<double> &rToDimMin1() const noexcept {
+        return rToDimMin1_;
+    }
 
     //! Compute the laplacian on the grid in radial coordinates. \f$\nabla^2\phi
     //! = \frac{d^2 phi}{dr^2}+(dim-1)/r*\frac{d phi}{dr} \f$.
@@ -239,23 +245,23 @@ template <std::size_t nPhi> class FieldConfiguration {
     //! laplacian for grid index zero is estimated from only two points, all
     //! other entries use three points (the last entry is never needed and thus
     //! not computed at all).
-    std::vector<std::array<double, nPhi>> laplacian() const {
-        std::vector<std::array<double, nPhi>> result(n_ - 1);
-        const double drinvSq = std::pow(drinv_, 2);
+    std::vector<std::array<double, nPhi>> laplacian() const noexcept {
+        std::vector<std::array<double, nPhi>> result(phi_.size() - 1);
+        const double drinvSq{std::pow(drinv_, 2)};
 
-        auto curr = phi_[0].begin();
-        auto next = phi_[1].begin();
-        auto out = result[0].begin();
+        auto curr{phi_[0].begin()};
+        auto next{phi_[1].begin()};
+        auto out{result[0].begin()};
         while (next != phi_[1].end()) {
             *out++ = 2 * (*next++ - *curr++) * drinvSq * dim_;
         }
 
-        auto prev = phi_[0].begin();
-        std::size_t elemCount = nPhi;
-        const auto end = phi_.back().end();
+        auto prev{phi_[0].begin()};
+        std::size_t elemCount{nPhi};
+        const auto end{phi_.back().end()};
         while (next != end) {
-            const std::size_t i = elemCount++ / nPhi;
-            const double dimFac = (dim_ - 1) / (2. * i);
+            const std::size_t i{elemCount++ / nPhi};
+            const double dimFac{(dim_ - 1) / (2. * i)};
             *out++ = drinvSq * ((1 + dimFac) * *next++ - 2 * *curr++ +
                                 (1 - dimFac) * *prev++);
         }
@@ -263,51 +269,55 @@ template <std::size_t nPhi> class FieldConfiguration {
     }
 
     template <class Model>
-    std::vector<std::array<double, nPhi>> dVdphi(const Model &model) {
+    std::vector<std::array<double, nPhi>> dVdphi(const Model &model) const
+        noexcept(noexcept(model.calcDvdphi(std::declval<double *>(),
+                                           std::declval<double *>()))) {
         static_assert(Model::nPhi == nPhi, "field dimensions must match");
-        std::vector<std::array<double, nPhi>> result(n_);
-        auto phi = phi_.begin(), res = result.begin();
-        const auto endRes = result.end();
-        while (res != endRes) {
-            model.calcDvdphi((phi++)->data(), (res++)->data());
+        std::vector<std::array<double, nPhi>> result(phi_.size());
+        auto phi{phi_.begin()};
+        for (auto &res : result) {
+            model.calcDvdphi((phi++)->data(), res.data());
         }
         return result;
     }
 
     // field excursion from the origin to the infinity
-    double fieldExcursion() const {
+    double fieldExcursion() const noexcept {
         return Detail::normDifference(phi_.back(), phi_.front());
     }
 
     // derivative of scalar field at boundary
-    double derivativeAtBoundary() const {
-        return drinv_ * Detail::normDifference(phi_.back(), phi_[n_ - 2]);
+    double derivativeAtBoundary() const noexcept {
+        return drinv_ * Detail::normDifference(phi_.back(), *(phi_.end() - 2));
     }
 };
 
-// kinetic energy of the configuration
-// \int_0^\infty dr r^{d-1} \sum_i (-1/2) \phi_i \nabla^2\phi_i
+//! Kinetic energy of the field configuration.
+//! \f$ \int_0^\infty dr r^{d-1} (-1/2) \sum_i \phi_i \nabla^2\phi_i \f$
 template <std::size_t nPhi>
-double kineticEnergy(const FieldConfiguration<nPhi> &field) {
+double kineticEnergy(const FieldConfiguration<nPhi> &field) noexcept {
     auto laplacian{field.laplacian()};
     auto integrand{field.rToDimMin1()};
-    for (std::size_t i = 0; i != field.n() - 1; ++i) {
-        integrand[i] *=
-            -0.5 * std::inner_product(field[i].begin(), field[i].end(),
-                                      laplacian[i].begin(), 0.);
+    auto iField{field.begin()};
+    auto iInteg{integrand.begin()};
+    for (const auto &lap : laplacian) {
+        *iInteg++ *= -0.5 * std::inner_product(lap.begin(), lap.end(),
+                                               (iField++)->begin(), 0.);
     }
     return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
                                         field.dr());
 }
 
-// potential energy of the configuration
-// \int_0^\infty dr r^{d-1} V(\phi)
+//! Potential energy of the field configuration.
+//! \f$ \int_0^\infty dr r^{d-1} V(\phi) \f$
 template <class Model>
-double potentialEnergy(const FieldConfiguration<Model::nPhi> &field,
-                       const Model &model, double zeroPot) {
+double potentialEnergy(
+    const FieldConfiguration<Model::nPhi> &field, const Model &model,
+    double zeroPot) noexcept(noexcept(model.vpot(std::declval<double *>()))) {
     auto integrand{field.rToDimMin1()};
-    for (std::size_t i = 0; i != field.n(); ++i) {
-        integrand[i] *= (model.vpot(field[i].data()) - zeroPot);
+    auto iField{field.begin()};
+    for (double &integ : integrand) {
+        integ *= (model.vpot((iField++)->data()) - zeroPot);
     }
     return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
                                         field.dr());
@@ -330,20 +340,21 @@ template <class Model> class BounceCalculator {
     double computeLambda(const std::vector<std::array<double, nPhi>> &laplacian,
                          const std::vector<std::array<double, nPhi>> &dVdphi,
                          const std::vector<double> &rToDimMin1,
-                         double gridSpacing) {
+                         double gridSpacing) const noexcept {
         auto integrand1{rToDimMin1};
         auto integrand2{rToDimMin1};
 
         auto i1{integrand1.begin()}, i2{integrand2.begin()};
-        auto lap{laplacian.begin()}, dV{dVdphi.begin()};
-        while (i1 != integrand1.end()) {
+        auto dV{dVdphi.begin()};
+        for (const auto &lap : laplacian) {
             *i1++ *=
-                std::inner_product(dV->begin(), dV->end(), lap->begin(), 0.);
+                std::inner_product(dV->begin(), dV->end(), lap.begin(), 0.);
             *i2++ *=
                 std::accumulate(dV->begin(), dV->end(), 0., Detail::squaredSum);
-            ++lap;
             ++dV;
         }
+        integrand1.back() = 0;
+        integrand2.back() = 0;
         return Detail::trapezoidalIntegrate(integrand1.begin(),
                                             integrand1.end(), gridSpacing) /
                Detail::trapezoidalIntegrate(integrand2.begin(),
@@ -351,10 +362,11 @@ template <class Model> class BounceCalculator {
     };
 
     //! Calculate the bracketed part of the RHS of Eq. (10) of 1908.10868.
+    //! Reuse the memory from laplacian as an optimization.
     std::vector<std::array<double, nPhi>>
     computeRhs(std::vector<std::array<double, nPhi>> &&laplacian,
                const std::vector<std::array<double, nPhi>> &dVdphi,
-               double lambda) {
+               double lambda) const noexcept {
         auto iRhs{laplacian.front().begin()};
         const auto endRhs{laplacian.back().end()};
         auto dV{dVdphi.front().begin()};
@@ -367,8 +379,9 @@ template <class Model> class BounceCalculator {
     //! Perform a flow step for the field as in Eq. (10) of 1908.10868.
     //! The field value at boundary is fixed to phiFV and will not be updated.
     //! If the RHS of the EOM at the origin is too big a smaller step is taken.
-    void performFlowStep(FieldConfiguration<nPhi> &field, double dTau,
-                         const std::vector<std::array<double, nPhi>> &RHS) {
+    void performFlowStep(
+        FieldConfiguration<nPhi> &field, double dTau,
+        const std::vector<std::array<double, nPhi>> &RHS) const noexcept {
         const auto normAtOrigin{std::sqrt(std::accumulate(
             RHS.front().begin(), RHS.front().end(), 0., Detail::squaredSum))};
         const auto dtautilde{
@@ -384,13 +397,13 @@ template <class Model> class BounceCalculator {
     }
 
     //! Euclidean area/volume term that appears in the bounce action.
-    double bounceArea() {
+    double bounceArea() const noexcept {
         return dim_ * std::pow(M_PI, dim_ / 2.) / std::tgamma(dim_ / 2. + 1.);
     }
 
   public:
     BounceCalculator(const Model &model, std::size_t dim,
-                     Parameters params = {})
+                     Parameters params = {}) noexcept
         : params_{params}, dim_{dim}, model_{model} {}
 
     // main routine to get the bounce solution
@@ -465,7 +478,8 @@ template <class Model> class BounceCalculator {
     }
 
     // evolve the configuration by dtau
-    double evolve(FieldConfiguration<nPhi> &field, double dtau) {
+    double evolve(FieldConfiguration<nPhi> &field,
+                  double dtau) noexcept(noexcept(field.dVdphi(model_))) {
         auto laplacian{field.laplacian()};
         const auto dVdphi{field.dVdphi(model_)};
         lambda =
@@ -476,25 +490,28 @@ template <class Model> class BounceCalculator {
     }
 
     //! Kinetic energy of the bounce.
-    double tBounce(const FieldConfiguration<nPhi> &field) const {
+    double tBounce(const FieldConfiguration<nPhi> &field) const noexcept {
         return bounceArea() * std::pow(lambda, dim_ / 2. - 1.) *
                kineticEnergy(field);
     }
 
     //! Potential energy of the bounce.
-    double vBounce(const FieldConfiguration<nPhi> &field) const {
+    double vBounce(const FieldConfiguration<nPhi> &field) const
+        noexcept(noexcept(potentialEnergy(field, model_, VFV))) {
         return bounceArea() * pow(lambda, dim_ / 2.) *
                potentialEnergy(field, model_, VFV);
     }
 
     //! Euclidean action of the bounce solution in d-dimensional space.
-    double action(const FieldConfiguration<nPhi> &field) const {
+    double action(const FieldConfiguration<nPhi> &field) const
+        noexcept(noexcept(vBounce(field))) {
         return tBounce(field) + vBounce(field);
     }
 };
 
 template <class Model, typename... Args>
-auto makeBounceCalculator(const Model &model, std::size_t dim, Args... args) {
+auto makeBounceCalculator(const Model &model, std::size_t dim,
+                          Args... args) noexcept {
     return BounceCalculator<Model>{model, dim, std::forward<Args>(args)...};
 }
 
