@@ -5,10 +5,14 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
-#include <iostream>
+#include <functional>
 #include <numeric>
+#include <stdexcept>
 #include <utility>
 #include <vector>
+#ifdef SIMPLEBOUNCE_VERBOSE
+#include <iostream>
+#endif
 
 namespace simplebounce {
 
@@ -321,7 +325,6 @@ template <class Model> class BounceCalculator {
 
     const Model &model_;
     double VFV;
-    bool verbose = false;
 
     //! Calculate \f$\lambda\f$ according to Eq. (5) of 1908.10868
     double computeLambda(const std::vector<std::array<double, nPhi>> &laplacian,
@@ -380,6 +383,11 @@ template <class Model> class BounceCalculator {
         }
     }
 
+    //! Euclidean area/volume term that appears in the bounce action.
+    double bounceArea() {
+        return dim_ * std::pow(M_PI, dim_ / 2.) / std::tgamma(dim_ / 2. + 1.);
+    }
+
   public:
     BounceCalculator(const Model &model, std::size_t dim,
                      Parameters params = {})
@@ -391,39 +399,36 @@ template <class Model> class BounceCalculator {
                  const std::array<double, nPhi> &phiTV) {
         VFV = model_.vpot(phiFV.data());
         if (model_.vpot(phiTV.data()) > VFV) {
-            std::cerr << "!!! energy of true vacuum is larger than false "
-                         "vacuum !!!"
-                      << std::endl;
-            return -1;
+            throw(std::invalid_argument(
+                "The false vacuum is deeper than the true vacuum"));
         }
 
-        // make the bubble wall thin to get negative potential energy
-        // if V is positive, make the wall thin.
-        if (verbose) {
-            std::cerr << "probing a thickness to get negative V[phi] ..."
-                      << std::endl;
-        }
+#ifdef SIMPLEBOUNCE_VERBOSE
+        std::cerr << "probing a thickness to get negative V[phi] ..."
+                  << std::endl;
+#endif
         auto initBounce = InitialBounceConfiguration<nPhi>{
             phiFV, phiTV, params_.width, params_.r0Frac};
+        // Make the bubble wall thin enough to get a negative potential energy.
         while (!initBounce.negativePotentialEnergy(model_, dim_)) {
             initBounce.width() *= 0.5;
         }
 
-        // make the size of the bubble sufficiently smaller than the size of the
-        // sphere. If dphi/dr at the boundary becomes too large during flow,
-        // take smaller initial bounce configuration.
-        if (verbose) {
-            std::cerr << "probing the size of the bounce configuration ..."
-                      << std::endl;
-        }
+#ifdef SIMPLEBOUNCE_VERBOSE
+        std::cerr << "probing the size of the bounce configuration ..."
+                  << std::endl;
+#endif
         FieldConfiguration<nPhi> field{initBounce, dim_, params_.rMax};
+        // Make the size of the bubble sufficiently smaller than the size of the
+        // sphere. If dphi/dr at the boundary becomes too large during flow,
+        // take a smaller initial bounce configuration.
         while (evolveUntil(field,
                            params_.tend1 * params_.rMax * params_.rMax) != 0) {
-            if (verbose) {
-                std::cerr << "the size of the bounce is too large. initial "
-                             "condition is scale transformed."
-                          << std::endl;
-            }
+#ifdef SIMPLEBOUNCE_VERBOSE
+            std::cerr << "the size of the bounce is too large. initial "
+                         "condition is scale transformed."
+                      << std::endl;
+#endif
             initBounce.r0byR() *= 0.5;
             initBounce.width() *= 0.5;
             field.resetInitialBounce(initBounce);
@@ -443,10 +448,10 @@ template <class Model> class BounceCalculator {
         double dtau = 2. / (1. + dim_ + sqrt(1. + dim_)) * pow(field.dr(), 2) *
                       params_.safetyfactor;
 
-        if (verbose) {
-            std::cerr << "evolve until tau = " << tauend << ", (dtau = " << dtau
-                      << ")" << std::endl;
-        }
+#ifdef SIMPLEBOUNCE_VERBOSE
+        std::cerr << "evolve until tau = " << tauend << ", (dtau = " << dtau
+                  << ")" << std::endl;
+#endif
 
         for (double tau = 0.; tau < tauend; tau += dtau) {
             evolve(field, dtau);
@@ -470,31 +475,22 @@ template <class Model> class BounceCalculator {
         return lambda;
     }
 
-    // Kinetic energy of the bounce
-    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
+    //! Kinetic energy of the bounce.
     double tBounce(const FieldConfiguration<nPhi> &field) const {
-        double area = dim_ * pow(M_PI, dim_ / 2.) / tgamma(dim_ / 2. + 1.);
-        return area * pow(lambda, dim_ / 2. - 1.) * kineticEnergy(field);
+        return bounceArea() * std::pow(lambda, dim_ / 2. - 1.) *
+               kineticEnergy(field);
     }
 
-    // Potential energy of the bounce
-    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
+    //! Potential energy of the bounce.
     double vBounce(const FieldConfiguration<nPhi> &field) const {
-        double area = dim_ * pow(M_PI, dim_ / 2.) / tgamma(dim_ / 2. + 1.);
-        return area * pow(lambda, dim_ / 2.) *
+        return bounceArea() * pow(lambda, dim_ / 2.) *
                potentialEnergy(field, model_, VFV);
     }
 
-    // Euclidean action in d-dimensional space
-    // The bounce configuration can be obtained from Eq. 15 of 1907.02417
+    //! Euclidean action of the bounce solution in d-dimensional space.
     double action(const FieldConfiguration<nPhi> &field) const {
         return tBounce(field) + vBounce(field);
     }
-    // turn on verbose mode
-    void verboseOn() { verbose = true; }
-
-    // turn off verbose mode
-    void verboseOff() { verbose = false; }
 };
 
 template <class Model, typename... Args>
