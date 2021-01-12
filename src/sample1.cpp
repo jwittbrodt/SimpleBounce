@@ -19,16 +19,14 @@ class MyModel {
 
 int main() {
     MyModel model{};
-    auto bounce = simplebounce::makeBounceCalculator(model, 4);
-
     std::array<double, 1> phiTV{10.}; // a point at which V<0
     std::array<double, 1> phiFV{0.};  // false vacuum
 
     // calculate the bounce solution
-    double action = bounce.solve(phiFV, phiTV);
+    auto bounceSolution{simplebounce::solve(model, phiFV, phiTV, 4)};
 
     // show the Euclidean action
-    std::cout << "S_E = " << action << std::endl;
+    std::cout << "S_E = " << bounceSolution.action() << std::endl;
 
     return 0;
 }

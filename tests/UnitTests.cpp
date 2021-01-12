@@ -136,8 +136,8 @@ TEST_CASE("initialize field configuration") {
     };
 
     BENCHMARK("new fieldconfig") {
-        auto initField =
-            simplebounce::InitialBounceConfiguration<nPhi>{fv, tv, 0.05, 0.5};
+        auto initField = simplebounce::Detail::InitialBounceConfiguration<nPhi>{
+            fv, tv, 0.05, 0.5};
         auto field = simplebounce::FieldConfiguration<nPhi>{initField, 4, 1.};
         return field;
     };
@@ -150,7 +150,8 @@ TEST_CASE("initial configuration") {
     const auto tv = std::array<double, nPhi>{1, 1};
     OldFieldConfiguration<nPhi> field{100, 4, 1.};
     field.setInitial(0.5, 0.05, fv, tv);
-    simplebounce::InitialBounceConfiguration<nPhi> initField{fv, tv, 0.05, 0.5};
+    simplebounce::Detail::InitialBounceConfiguration<nPhi> initField{fv, tv,
+                                                                     0.05, 0.5};
 
     auto getField = [&field](std::size_t i) {
         auto res = std::array<double, nPhi>{};
@@ -190,7 +191,8 @@ TEST_CASE("laplacian") {
     static constexpr std::size_t nPhi = 5;
     const auto fv = std::array<double, nPhi>{0, 0, 0, 0, 0};
     const auto tv = std::array<double, nPhi>{1, 1, 1, 1, 1};
-    simplebounce::InitialBounceConfiguration<nPhi> initField{fv, tv, 0.05, 0.5};
+    simplebounce::Detail::InitialBounceConfiguration<nPhi> initField{fv, tv,
+                                                                     0.05, 0.5};
     simplebounce::FieldConfiguration<nPhi> field{initField, 4, 1.};
 
     OldFieldConfiguration<nPhi> oldField{100, 4, 1.};
