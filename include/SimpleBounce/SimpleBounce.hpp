@@ -79,58 +79,20 @@ BounceSolution<Model> solve(const Model &model,
     }
     return result;
 }
-
-namespace Detail {
-template <class BidirectionalIterator>
-double trapezoidalIntegrate(BidirectionalIterator beginValues,
-                            BidirectionalIterator endValues,
-                            double stepSize) noexcept {
-    double borderVal = (*beginValues++ + *endValues--) / 2.;
-    return stepSize * std::accumulate(beginValues, endValues, borderVal);
-}
-} // namespace Detail
 template <class Model> struct BounceSolution {
     FieldConfiguration<Model::nPhi> field;
     const Model &model;
     double lambda = 0.;
 
-    //! Kinetic energy of the field configuration.
-    //! \f$ \int_0^\infty dr r^{d-1} (-1/2) \sum_i \phi_i \nabla^2\phi_i \f$
-    double kineticEnergy() const noexcept {
-        auto laplacian{field.laplacian()};
-        auto integrand{field.rToDimMin1()};
-        auto iField{field.begin()};
-        auto iInteg{integrand.begin()};
-        for (const auto &lap : laplacian) {
-            *iInteg++ *= -0.5 * std::inner_product(lap.begin(), lap.end(),
-                                                   (iField++)->begin(), 0.);
-        }
-        return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
-                                            field.dr());
-    }
-
-    //! Potential energy of the field configuration.
-    //! \f$ \int_0^\infty dr r^{d-1} V(\phi) \f$
-    double potentialEnergy() const
-        noexcept(noexcept(model.vpot(std::declval<double *>()))) {
-        auto integrand{field.rToDimMin1()};
-        auto iField{field.begin()};
-        auto zeroPot{model.vpot(field.phiFV().data())};
-        for (double &integ : integrand) {
-            integ *= (model.vpot((iField++)->data()) - zeroPot);
-        }
-        return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
-                                            field.dr());
-    }
-
     //! Euclidean action of the bounce solution in d-dimensional space.
     double action() const
         noexcept(noexcept(model.vpot(std::declval<double *>()))) {
         using std::pow;
-        const auto dim{field.dim()};
-        const auto area{dim * pow(M_PI, dim / 2.) / std::tgamma(dim / 2. + 1.)};
-        const auto tBounce{area * pow(lambda, dim / 2. - 1.) * kineticEnergy()};
-        const auto vBounce{area * pow(lambda, dim / 2.) * potentialEnergy()};
+        const auto do2{field.dim() / 2.};
+        const auto area{2 * do2 * pow(M_PI, do2) / std::tgamma(do2 + 1.)};
+        const auto tBounce{area * pow(lambda, do2 - 1.) * kineticEnergy(field)};
+        const auto vBounce{area * pow(lambda, do2) *
+                           potentialEnergy(field, model)};
         return tBounce + vBounce;
     }
 };
@@ -148,6 +110,14 @@ double normDifference(const std::array<double, n> &x1,
     return std::sqrt(std::inner_product(x1.begin(), x1.end(), x2.begin(), 0.,
                                         Detail::squaredSum,
                                         std::minus<double>{}));
+}
+
+template <class BidirectionalIterator>
+double trapezoidalIntegrate(BidirectionalIterator beginValues,
+                            BidirectionalIterator endValues,
+                            double stepSize) noexcept {
+    double borderVal = (*beginValues++ + *endValues--) / 2.;
+    return stepSize * std::accumulate(beginValues, endValues, borderVal);
 }
 } // namespace Detail
 
@@ -278,6 +248,39 @@ template <std::size_t nPhi> class FieldConfiguration {
         return Detail::normDifference(phi_.back(), *(phi_.end() - 2)) / dr_;
     }
 };
+
+//! Kinetic energy of the field configuration.
+//! \f$ \int_0^\infty dr r^{d-1} (-1/2) \sum_i \phi_i \nabla^2\phi_i \f$
+template <std::size_t nPhi>
+double kineticEnergy(const FieldConfiguration<nPhi> &field) noexcept {
+    auto laplacian{field.laplacian()};
+    auto integrand{field.rToDimMin1()};
+    auto iField{field.begin()};
+    auto iInteg{integrand.begin()};
+    for (const auto &lap : laplacian) {
+        *iInteg++ *= -0.5 * std::inner_product(lap.begin(), lap.end(),
+                                               (iField++)->begin(), 0.);
+    }
+    return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
+                                        field.dr());
+}
+
+//! Potential energy of the field configuration.
+//! \f$ \int_0^\infty dr r^{d-1} V(\phi) \f$
+template <class Model>
+double potentialEnergy(
+    const FieldConfiguration<Model::nPhi> &field,
+    const Model
+        &model) noexcept(noexcept(model.vpot(std::declval<double *>()))) {
+    auto integrand{field.rToDimMin1()};
+    auto iField{field.begin()};
+    auto zeroPot{model.vpot(field.phiFV().data())};
+    for (double &integ : integrand) {
+        integ *= (model.vpot((iField++)->data()) - zeroPot);
+    }
+    return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
+                                        field.dr());
+}
 
 namespace Detail {
 
