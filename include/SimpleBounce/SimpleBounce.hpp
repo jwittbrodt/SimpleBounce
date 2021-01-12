@@ -15,112 +15,127 @@
 #endif
 
 namespace simplebounce {
-template<std::size_t nPhi> class FieldConfiguration;
+template <class Model> struct BounceSolution;
+template <std::size_t nPhi> class FieldConfiguration;
+namespace Detail {
+template <std::size_t nPhi> class InitialBounceConfiguration;
+}
 
-namespace Detail{
+struct Parameters {
+    // initial grid size
+    std::size_t initialN = 100;
+    // radius at the boundary
+    double rMax = 1.;
+    double safetyfactor = 0.9;
+    // maximal variation of the field in evolve()
+    double maximumvariation = 0.01;
+    // initial value of the parameter InitBounceParams::r0Frac
+    double r0Frac = 0.5;
+    // initial value of the parameter InitBounceParams::width
+    double width = 0.05;
+    // maximal value of the derivative of the field at the boundary
+    double derivMax = 1e-2;
+    // set tau1
+    double tend1 = 0.4;
+};
 
-template <std::size_t nPhi> class InitialBounceConfiguration {
-    std::array<double, nPhi> phiFV_;
-    std::array<double, nPhi> phiTV_;
-    double width_;
-    double r0byR_;
-
-    static constexpr double half = 1 / 2.;
-    static constexpr double almost0 = 0.1 / FieldConfiguration<nPhi>::maxN;
-    static constexpr double almost1 = 1 - almost0;
-
-  public:
-    InitialBounceConfiguration(const std::array<double, nPhi> &phiFV,
-                               const std::array<double, nPhi> &phiTV,
-                               double width, double r0byR) noexcept
-        : phiFV_{phiFV}, phiTV_{phiTV}, width_{width}, r0byR_{r0byR} {}
-
-    std::array<double, nPhi> phi(double rbyR) const noexcept {
-        if (rbyR > almost1) {
-            return phiFV_;
-        }
-        if (rbyR < almost0) {
-            return phiTV_;
-        }
-        const auto interpolatingField =
-            [scaleFac = (1. + std::tanh((rbyR - r0byR_) / width_)) *
-                        half](double phiT, double phiF) {
-                return phiT + scaleFac * (phiF - phiT);
-            };
-        std::array<double, nPhi> res;
-        std::transform(phiTV_.begin(), phiTV_.end(), phiFV_.begin(),
-                       res.begin(), interpolatingField);
-        return res;
+template <class Model>
+BounceSolution<Model> solve(const Model &model,
+                            const std::array<double, Model::nPhi> &phiFV,
+                            const std::array<double, Model::nPhi> &phiTV,
+                            std::size_t dim, Parameters params = {}) {
+    if (model.vpot(phiTV.data()) > model.vpot(phiFV.data())) {
+        throw(std::invalid_argument(
+            "The false vacuum is deeper than the true vacuum"));
     }
 
-    std::vector<std::array<double, nPhi>> onGrid(std::size_t n) const noexcept {
-        auto phiGrid = std::vector<std::array<double, nPhi>>(n);
-        onGrid(phiGrid);
-        return phiGrid;
+#ifdef SIMPLEBOUNCE_VERBOSE
+    std::cerr << "probing a thickness to get negative V[phi] ..." << std::endl;
+#endif
+    auto initBounce{Detail::InitialBounceConfiguration<Model::nPhi>{
+        phiFV, phiTV, params.width, params.r0Frac}};
+    // Make the bubble wall thin enough to get a negative potential energy.
+    while (!initBounce.negativePotentialEnergy(model, dim)) {
+        initBounce.width() *= 0.5;
     }
 
-    void onGrid(std::vector<std::array<double, nPhi>> &grid) const noexcept {
-        const auto n = grid.size();
-        grid.front() = phiTV_;
-        const auto delta = 1. / static_cast<double>(n - 1);
-        for (std::size_t i = 1; i != n - 1; ++i) {
-            grid[i] = phi(i * delta);
+#ifdef SIMPLEBOUNCE_VERBOSE
+    std::cerr << "probing the size of the bounce configuration ..."
+              << std::endl;
+#endif
+    BounceSolution<Model> result{{initBounce, dim, params.rMax}, model};
+    // Make the size of the bubble sufficiently smaller than the size of the
+    // sphere. If dphi/dr at the boundary becomes too large during flow,
+    // take a smaller initial bounce configuration.
+    while (!evolveUntil(result, params)) {
+#ifdef SIMPLEBOUNCE_VERBOSE
+        std::cerr << "the size of the bounce is too large. initial "
+                     "condition is scale transformed."
+                  << std::endl;
+#endif
+        initBounce.r0byR() *= 0.5;
+        initBounce.width() *= 0.5;
+        result.field.resetInitialBounce(initBounce);
+    }
+    return result;
+}
+
+namespace Detail {
+template <class BidirectionalIterator>
+double trapezoidalIntegrate(BidirectionalIterator beginValues,
+                            BidirectionalIterator endValues,
+                            double stepSize) noexcept {
+    double borderVal = (*beginValues++ + *endValues--) / 2.;
+    return stepSize * std::accumulate(beginValues, endValues, borderVal);
+}
+} // namespace Detail
+template <class Model> struct BounceSolution {
+    FieldConfiguration<Model::nPhi> field;
+    const Model &model;
+    double lambda = 0.;
+
+    //! Kinetic energy of the field configuration.
+    //! \f$ \int_0^\infty dr r^{d-1} (-1/2) \sum_i \phi_i \nabla^2\phi_i \f$
+    double kineticEnergy() const noexcept {
+        auto laplacian{field.laplacian()};
+        auto integrand{field.rToDimMin1()};
+        auto iField{field.begin()};
+        auto iInteg{integrand.begin()};
+        for (const auto &lap : laplacian) {
+            *iInteg++ *= -0.5 * std::inner_product(lap.begin(), lap.end(),
+                                                   (iField++)->begin(), 0.);
         }
-        grid.back() = phiFV_;
+        return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
+                                            field.dr());
     }
 
-    double width() const noexcept { return width_; }
-    double &width() noexcept { return width_; }
-    double &r0byR() noexcept { return r0byR_; }
-
-    //! Determine if this initial configuration has a negative potential energy
-    //! for this model and dimensionality.
-    //!
-    //! Uses a dedicated trapezoidal integration adapted from
-    //! boost::math::quadrature::trapezoidal to perform the \f$r\f$ integral
-    //! from 0 to 1. Stops the integration as soon as the absolute value is
-    //! larger than margin * the integration error or after maxRefinements.
-    //! Returns true if the resulting value is significantly less than
-    //! maxVal.
-    template <class Model>
-    bool negativePotentialEnergy(const Model &model, std::size_t dim) const
+    //! Potential energy of the field configuration.
+    //! \f$ \int_0^\infty dr r^{d-1} V(\phi) \f$
+    double potentialEnergy() const
         noexcept(noexcept(model.vpot(std::declval<double *>()))) {
-        static constexpr std::size_t maxRefinements = 10;
-        static constexpr double margin = 5;
-        static constexpr double maxVal = -1e-5;
-
-        const double zeroPot = model.vpot(phiFV_.data());
-        const auto integrand = [dim, zeroPot, model, this](double r) {
-            return std::pow(r, dim - 1) * (model.vpot(phi(r).data()) - zeroPot);
-        };
-
-        // the integrand vanishes at the endpoints by construction
-        auto I0 = 0.;
-        auto h = half;
-        auto I1 = integrand(h) * h;
-
-        // The recursion is:
-        // I_k = 1/2 I_{k-1} + 1/2^k \sum_{j=1; j odd, j < 2^k} f(a+j(b-a)/2^k)
-        auto k = 2ul;
-        auto error = std::abs(I0 - I1);
-        while (k < 4 || (k < maxRefinements && margin * error > std::abs(I1))) {
-            I0 = I1;
-            I1 = I0 * half;
-            const auto p = std::size_t{1} << k;
-            h *= half;
-            auto sum = 0.;
-            for (std::size_t j = 1; j < p; j += 2) {
-                auto y = integrand(j * h);
-                sum += y;
-            }
-            I1 += sum * h;
-            ++k;
-            error = std::abs(I0 - I1);
+        auto integrand{field.rToDimMin1()};
+        auto iField{field.begin()};
+        auto zeroPot{model.vpot(field.phiFV().data())};
+        for (double &integ : integrand) {
+            integ *= (model.vpot((iField++)->data()) - zeroPot);
         }
-        return I1 < maxVal - error;
+        return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
+                                            field.dr());
+    }
+
+    //! Euclidean action of the bounce solution in d-dimensional space.
+    double action() const
+        noexcept(noexcept(model.vpot(std::declval<double *>()))) {
+        using std::pow;
+        const auto dim{field.dim()};
+        const auto area{dim * pow(M_PI, dim / 2.) / std::tgamma(dim / 2. + 1.)};
+        const auto tBounce{area * pow(lambda, dim / 2. - 1.) * kineticEnergy()};
+        const auto vBounce{area * pow(lambda, dim / 2.) * potentialEnergy()};
+        return tBounce + vBounce;
     }
 };
 
+namespace Detail {
 //! Functor that performs a squared sum. E.g. for use with std::accumulate.
 const auto squaredSum = [](double sum, double x) noexcept {
     return sum + std::pow(x, 2);
@@ -134,15 +149,7 @@ double normDifference(const std::array<double, n> &x1,
                                         Detail::squaredSum,
                                         std::minus<double>{}));
 }
-
-template <class BidirectionalIterator>
-double trapezoidalIntegrate(BidirectionalIterator beginValues,
-                            BidirectionalIterator endValues,
-                            double stepSize) noexcept {
-    double borderVal = (*beginValues++ + *endValues--) / 2.;
-    return stepSize * std::accumulate(beginValues, endValues, borderVal);
-}
-}
+} // namespace Detail
 
 template <std::size_t nPhi> class FieldConfiguration {
   public:
@@ -153,12 +160,9 @@ template <std::size_t nPhi> class FieldConfiguration {
     std::size_t dim_;
     double rMax_;
     std::vector<std::array<double, nPhi>> phi_;
-    std::array<double, nPhi> phiFV_;
-    std::array<double, nPhi> phiTV_;
 
     double dr_ = rMax_ / (phi_.size() - 1);
-    double drinv_ = 1 / dr_;
-    std::vector<double> rToDimMin1_;
+    std::vector<double> rToDimMin1_ = calcRToDimMin1();
 
     // calculate \f$ r_i^{dim-1} \f$
     std::vector<double> calcRToDimMin1() const noexcept {
@@ -172,8 +176,8 @@ template <std::size_t nPhi> class FieldConfiguration {
 
     std::size_t determineGridSize(
         const Detail::InitialBounceConfiguration<nPhi> &initBounce) const {
-        const auto n = std::max(
-            std::size_t{100}, static_cast<std::size_t>(1 / initBounce.width()));
+        const auto n{std::max(std::size_t{100}, static_cast<std::size_t>(
+                                                    1 / initBounce.width()))};
         if (n > maxN) {
             throw(std::runtime_error("Maximum grid size exceeded"));
         }
@@ -189,7 +193,6 @@ template <std::size_t nPhi> class FieldConfiguration {
     const std::array<double, nPhi> &operator[](std::size_t i) const noexcept {
         return phi_[i];
     }
-
     const std::array<double, nPhi> &phiFV() const noexcept {
         return phi_.back();
     }
@@ -198,17 +201,14 @@ template <std::size_t nPhi> class FieldConfiguration {
         const Detail::InitialBounceConfiguration<nPhi> &initBounce,
         std::size_t dim, double rMax)
         : dim_{dim}, rMax_{rMax}, phi_{initBounce.onGrid(
-                                      determineGridSize(initBounce))},
-          phiFV_{initBounce.phi(1.)}, phiTV_{initBounce.phi(0.)},
-          rToDimMin1_{calcRToDimMin1()} {}
+                                      determineGridSize(initBounce))} {}
 
     void resetInitialBounce(
         const Detail::InitialBounceConfiguration<nPhi> &initBounce) {
-        auto n = determineGridSize(initBounce);
+        auto n{determineGridSize(initBounce)};
         if (phi_.size() != n) {
             phi_.resize(n);
             dr_ = rMax_ / (n - 1.);
-            drinv_ = 1. / dr_;
             rToDimMin1_ = calcRToDimMin1();
         }
         initBounce.onGrid(phi_);
@@ -234,7 +234,7 @@ template <std::size_t nPhi> class FieldConfiguration {
     //! not computed at all).
     std::vector<std::array<double, nPhi>> laplacian() const noexcept {
         std::vector<std::array<double, nPhi>> result(phi_.size() - 1);
-        const double drinvSq{std::pow(drinv_, 2)};
+        const double drinvSq{std::pow(dr_, -2)};
 
         auto curr{phi_[0].begin()};
         auto next{phi_[1].begin()};
@@ -275,85 +275,113 @@ template <std::size_t nPhi> class FieldConfiguration {
 
     // derivative of scalar field at boundary
     double derivativeAtBoundary() const noexcept {
-        return drinv_ * Detail::normDifference(phi_.back(), *(phi_.end() - 2));
+        return Detail::normDifference(phi_.back(), *(phi_.end() - 2)) / dr_;
     }
 };
 
+namespace Detail {
 
-//! Kinetic energy of the field configuration.
-//! \f$ \int_0^\infty dr r^{d-1} (-1/2) \sum_i \phi_i \nabla^2\phi_i \f$
-template <std::size_t nPhi>
-double kineticEnergy(const FieldConfiguration<nPhi> &field) noexcept {
-    auto laplacian{field.laplacian()};
-    auto integrand{field.rToDimMin1()};
-    auto iField{field.begin()};
-    auto iInteg{integrand.begin()};
-    for (const auto &lap : laplacian) {
-        *iInteg++ *= -0.5 * std::inner_product(lap.begin(), lap.end(),
-                                               (iField++)->begin(), 0.);
+template <std::size_t nPhi> class InitialBounceConfiguration {
+    std::array<double, nPhi> phiFV_;
+    std::array<double, nPhi> phiTV_;
+    double width_;
+    double r0byR_;
+
+    static constexpr double half = 1 / 2.;
+    static constexpr double almost0 = 0.1 / FieldConfiguration<nPhi>::maxN;
+    static constexpr double almost1 = 1 - almost0;
+
+  public:
+    InitialBounceConfiguration(const std::array<double, nPhi> &phiFV,
+                               const std::array<double, nPhi> &phiTV,
+                               double width, double r0byR) noexcept
+        : phiFV_{phiFV}, phiTV_{phiTV}, width_{width}, r0byR_{r0byR} {}
+
+    std::array<double, nPhi> phi(double rbyR) const noexcept {
+        if (rbyR > almost1) {
+            return phiFV_;
+        }
+        if (rbyR < almost0) {
+            return phiTV_;
+        }
+        const auto interpolatingField =
+            [scaleFac = (1. + std::tanh((rbyR - r0byR_) / width_)) *
+                        half](double phiT, double phiF) {
+                return phiT + scaleFac * (phiF - phiT);
+            };
+        std::array<double, nPhi> res;
+        std::transform(phiTV_.begin(), phiTV_.end(), phiFV_.begin(),
+                       res.begin(), interpolatingField);
+        return res;
     }
-    return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
-                                        field.dr());
-}
 
-//! Potential energy of the field configuration.
-//! \f$ \int_0^\infty dr r^{d-1} V(\phi) \f$
-template <class Model>
-double potentialEnergy(
-    const FieldConfiguration<Model::nPhi> &field, const Model &model,
-    double zeroPot) noexcept(noexcept(model.vpot(std::declval<double *>()))) {
-    auto integrand{field.rToDimMin1()};
-    auto iField{field.begin()};
-    for (double &integ : integrand) {
-        integ *= (model.vpot((iField++)->data()) - zeroPot);
+    std::vector<std::array<double, nPhi>> onGrid(std::size_t n) const noexcept {
+        auto phiGrid{std::vector<std::array<double, nPhi>>(n)};
+        onGrid(phiGrid);
+        return phiGrid;
     }
-    return Detail::trapezoidalIntegrate(integrand.begin(), integrand.end(),
-                                        field.dr());
-}
 
+    void onGrid(std::vector<std::array<double, nPhi>> &grid) const noexcept {
+        const auto n{grid.size()};
+        grid.front() = phiTV_;
+        const auto delta{1. / static_cast<double>(n - 1)};
+        for (std::size_t i = 1; i != n - 1; ++i) {
+            grid[i] = phi(i * delta);
+        }
+        grid.back() = phiFV_;
+    }
 
-template <class Model> struct BounceSolution {
-    FieldConfiguration<Model::nPhi> field;
-    const Model &model;
-    double lambda = 0.;
+    double width() const noexcept { return width_; }
+    double &width() noexcept { return width_; }
+    double &r0byR() noexcept { return r0byR_; }
 
-    //! Euclidean action of the bounce solution in d-dimensional space.
-    double action() const
+    //! Determine if this initial configuration has a negative potential energy
+    //! for this model and dimensionality.
+    //!
+    //! Uses a dedicated trapezoidal integration adapted from
+    //! boost::math::quadrature::trapezoidal to perform the \f$r\f$ integral
+    //! from 0 to 1. Stops the integration as soon as the absolute value is
+    //! larger than margin * the integration error or after maxRefinements.
+    //! Returns true if the resulting value is significantly less than
+    //! maxVal.
+    template <class Model>
+    bool negativePotentialEnergy(const Model &model, std::size_t dim) const
         noexcept(noexcept(model.vpot(std::declval<double *>()))) {
-        const std::size_t dim = field.dim();
-        const double area{dim * std::pow(M_PI, dim / 2.) /
-                          std::tgamma(dim / 2. + 1.)};
-        const double tBounce{area * std::pow(lambda, dim / 2. - 1.) *
-                             kineticEnergy(field)};
-        const double vBounce{
-            area * std::pow(lambda, dim / 2.) *
-            potentialEnergy(field, model, model.vpot(field.phiFV().data()))};
-        return tBounce + vBounce;
+        static constexpr std::size_t maxRefinements = 10;
+        static constexpr double margin = 5;
+        static constexpr double maxVal = -1e-5;
+
+        const auto zeroPot{model.vpot(phiFV_.data())};
+        const auto integrand = [dim, zeroPot, model, this](double r) {
+            return std::pow(r, dim - 1) * (model.vpot(phi(r).data()) - zeroPot);
+        };
+
+        // the integrand vanishes at the endpoints by construction
+        auto I0{0.};
+        auto h{half};
+        auto I1{integrand(h) * h};
+
+        // The recursion is:
+        // I_k = 1/2 I_{k-1} + 1/2^k \sum_{j=1; j odd, j < 2^k} f(a+j(b-a)/2^k)
+        auto k{2ul};
+        auto error{std::abs(I0 - I1)};
+        while (k < 4 || (k < maxRefinements && margin * error > std::abs(I1))) {
+            I0 = I1;
+            I1 = I0 * half;
+            const auto p{static_cast<std::size_t>(1) << k};
+            h *= half;
+            auto sum{0.};
+            for (std::size_t j = 1; j < p; j += 2) {
+                auto y{integrand(j * h)};
+                sum += y;
+            }
+            I1 += sum * h;
+            ++k;
+            error = std::abs(I0 - I1);
+        }
+        return I1 < maxVal - error;
     }
 };
-
-
-struct Parameters {
-    // initial grid size
-    std::size_t initialN = 100;
-    // radius at the boundary
-    double rMax = 1.;
-    double safetyfactor = 0.9;
-    // maximal variation of the field in evolve()
-    double maximumvariation = 0.01;
-    // initial value of the parameter InitBounceParams::r0Frac
-    double r0Frac = 0.5;
-    // initial value of the parameter InitBounceParams::width
-    double width = 0.05;
-    // maximal value of the derivative of the field at the boundary
-    double derivMax = 1e-2;
-    // set tau1
-    double tend1 = 0.4;
-};
-
-
-namespace Detail{
-
 
 //! Calculate \f$\lambda\f$ according to Eq. (5) of 1908.10868
 template <std::size_t nPhi>
@@ -415,17 +443,21 @@ void performFlowStep(FieldConfiguration<nPhi> &field, double dTau,
         *f++ += dtautilde * *iRhs++;
     }
 }
+} // namespace Detail
 
 //! Evolve the field configuration by dtau
 template <class Model>
-void evolve(BounceSolution<Model> &solution, double dtau, double maxVariation) noexcept(
-    noexcept(solution.field.dVdphi(solution.model))) {
+void evolve(
+    BounceSolution<Model> &solution, double dtau,
+    double maxVariation) noexcept(noexcept(solution.field
+                                               .dVdphi(solution.model))) {
     auto laplacian{solution.field.laplacian()};
     const auto dVdphi{solution.field.dVdphi(solution.model)};
-    solution.lambda = computeLambda(
+    solution.lambda = Detail::computeLambda(
         laplacian, dVdphi, solution.field.rToDimMin1(), solution.field.dr());
-    const auto RHS = computeRhs(std::move(laplacian), dVdphi, solution.lambda);
-    performFlowStep(solution.field, dtau, RHS, maxVariation);
+    const auto RHS =
+        Detail::computeRhs(std::move(laplacian), dVdphi, solution.lambda);
+    Detail::performFlowStep(solution.field, dtau, RHS, maxVariation);
 }
 
 //! Evolve the field configuration from `tau = 0` to `tau = tauEnd`. Aborts and
@@ -463,50 +495,6 @@ bool evolveUntil(
         }
     }
     return true;
-}
-}
-
-
-template <class Model>
-BounceSolution<Model> solve(const Model &model,
-                            const std::array<double, Model::nPhi> &phiFV,
-                            const std::array<double, Model::nPhi> &phiTV,
-                            std::size_t dim, Parameters params = {}) {
-    if (model.vpot(phiTV.data()) > model.vpot(phiFV.data())) {
-        throw(std::invalid_argument(
-            "The false vacuum is deeper than the true vacuum"));
-    }
-
-#ifdef SIMPLEBOUNCE_VERBOSE
-    std::cerr << "probing a thickness to get negative V[phi] ..." << std::endl;
-#endif
-    auto initBounce = Detail::InitialBounceConfiguration<Model::nPhi>{
-        phiFV, phiTV, params.width, params.r0Frac};
-    // Make the bubble wall thin enough to get a negative potential energy.
-    while (!initBounce.negativePotentialEnergy(model, dim)) {
-        initBounce.width() *= 0.5;
-    }
-
-#ifdef SIMPLEBOUNCE_VERBOSE
-    std::cerr << "probing the size of the bounce configuration ..."
-              << std::endl;
-#endif
-    BounceSolution<Model> result{{initBounce, dim, params.rMax}, model};
-    // Make the size of the bubble sufficiently smaller than the size of the
-    // sphere. If dphi/dr at the boundary becomes too large during flow,
-    // take a smaller initial bounce configuration.
-    while (!Detail::evolveUntil(result,
-                                params )) {
-#ifdef SIMPLEBOUNCE_VERBOSE
-        std::cerr << "the size of the bounce is too large. initial "
-                     "condition is scale transformed."
-                  << std::endl;
-#endif
-        initBounce.r0byR() *= 0.5;
-        initBounce.width() *= 0.5;
-        result.field.resetInitialBounce(initBounce);
-    }
-    return result;
 }
 
 } // namespace simplebounce
