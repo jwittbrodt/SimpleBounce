@@ -1,3 +1,11 @@
+/** @file SimpleBounce.hpp
+ *
+ * Simplebounce is a single-header C++14 library that computes the bounce
+ * configuration of vacuum tunnelling for models with arbitrary scalar
+ * potentials. It is based on the method proposed in arXiv:1907.02417 and the
+ * algorithm is documented in arXiv:1908.10868. All equation numbers mentioned
+ * in this file refer to the latter publication.
+ */
 #pragma once
 
 #include <algorithm>
@@ -14,6 +22,7 @@
 #include <iostream>
 #endif
 
+//! Namespace of the simplebounce library
 namespace simplebounce {
 template <class Model> struct BounceSolution;
 template <std::size_t nPhi> class FieldConfiguration;
@@ -21,24 +30,58 @@ namespace Detail {
 template <std::size_t nPhi> class InitialBounceConfiguration;
 }
 
+//! Parameters that control the simplebounce algorithm.
 struct Parameters {
-    // initial grid size
-    std::size_t initialN = 100;
-    // radius at the boundary
+    // minimal grid size
+    std::size_t minGridSize = 100;
+    // radius \f$R\f$ of the boundary
     double rMax = 1.;
+    // safety factor to ensure no overly large $\delta\tau$ step is taken
     double safetyfactor = 0.9;
-    // maximal variation of the field in evolve()
+    // maximal variation of the field in one evolution step relative to the
+    // total field excursion
     double maximumvariation = 0.01;
-    // initial value of the parameter InitBounceParams::r0Frac
-    double r0Frac = 0.5;
-    // initial value of the parameter InitBounceParams::width
+    // position \f$r_0/R\f$ for the steep region of the initial bounce Eq (11)
+    double r0byR = 0.5;
+    // width \f$\sigma/R\f$ for the initial bounce Eq (11)
     double width = 0.05;
     // maximal value of the derivative of the field at the boundary
     double derivMax = 1e-2;
-    // set tau1
-    double tend1 = 0.4;
+    // flow time \f$\tau_1\f$
+    double tau1 = 0.4;
 };
 
+/**
+ * Main routine of simplebounce. Calculates the bounce solution from the false
+ * vacuum to the true vacuum.
+ *
+ * @tparam Model a Model class for use with simplebounce has to provide the
+ * following member variables and functions:
+ * ```c++
+ * class ExampleModel {
+ *     // number of field degrees of freedom
+ *     static constexpr std::size_t nPhi = 2;
+ *     // value of the scalar potential at the given fieldspace point phi
+ *     // (with nPhi elements)
+ *     double vpot(const double phi[]) const;
+ *     // compute the derivative of the scalar potential at the fieldspace
+ *     // point phi (both with nPhi elements)
+ *     void calcDvdphi(const double phi[], double derivative[]);
+ * };
+ * ```
+ * @param model Instance of a Model class that will be used to calculate the
+ * bounce
+ * @param phiFV Fieldspace location of the false vacuum
+ * @param phiTV Fieldspace location of the true vacuum. Any point in the
+ * potential deeper than the false vacuum is sufficient, this need not be a
+ * minimum.
+ * @param dim Dimensionality of the euclidean space in which the tunnelling
+ * takes place. This should usually be either 4 for zero temperature, or 3 for
+ * finite temperature tunnelling processes.
+ * @param params Optionally adjust the parameters of the algorithm to your
+ * liking.
+ * @returns BounceSolution<Model> the bounce solution from phiFV to phiTV
+ */
 template <class Model>
 BounceSolution<Model> solve(const Model &model,
                             const std::array<double, Model::nPhi> &phiFV,
@@ -53,7 +96,7 @@ BounceSolution<Model> solve(const Model &model,
     std::cerr << "probing a thickness to get negative V[phi] ..." << std::endl;
 #endif
     auto initBounce{Detail::InitialBounceConfiguration<Model::nPhi>{
-        phiFV, phiTV, params.width, params.r0Frac}};
+        phiFV, phiTV, params.width, params.r0byR}};
     // Make the bubble wall thin enough to get a negative potential energy.
     while (!initBounce.negativePotentialEnergy(model, dim)) {
         initBounce.width() *= 0.5;
@@ -63,7 +106,8 @@ BounceSolution<Model> solve(const Model &model,
     std::cerr << "probing the size of the bounce configuration ..."
               << std::endl;
 #endif
-    BounceSolution<Model> result{{initBounce, dim, params.rMax}, model};
+    BounceSolution<Model> result{
+        {initBounce, dim, params.rMax, params.minGridSize}, model};
     // Make the size of the bubble sufficiently smaller than the size of the
     // sphere. If dphi/dr at the boundary becomes too large during flow,
     // take a smaller initial bounce configuration.
@@ -79,9 +123,15 @@ BounceSolution<Model> solve(const Model &model,
     }
     return result;
 }
+
+//! A bounce solution calculated by simplebounce.
 template <class Model> struct BounceSolution {
+    //! The field values of the reduced bounce solution.
     FieldConfiguration<Model::nPhi> field;
+    //! The physics model in which this solution was calculated.
     const Model &model;
+    //! Scale transformation parameter \f$\lambda\f$ to obtain the bounce
+    //! solution from the reduces bounce solution through Eq 8.
     double lambda = 0.;
 
     //! Euclidean action of the bounce solution in d-dimensional space.
@@ -97,6 +147,7 @@ template <class Model> struct BounceSolution {
     }
 };
 
+//! Simplebounce implementation details.
 namespace Detail {
 //! Functor that performs a squared sum. E.g. for use with std::accumulate.
 const auto squaredSum = [](double sum, double x) noexcept {
@@ -112,18 +163,21 @@ double normDifference(const std::array<double, n> &x1,
                                         std::minus<double>{}));
 }
 
+//! 1D trapezoidal integration on a uniform grid.
 template <class BidirectionalIterator>
 double trapezoidalIntegrate(BidirectionalIterator beginValues,
                             BidirectionalIterator endValues,
-                            double stepSize) noexcept {
+                            double gridSpacing) noexcept {
     double borderVal = (*beginValues++ + *endValues--) / 2.;
-    return stepSize * std::accumulate(beginValues, endValues, borderVal);
+    return gridSpacing * std::accumulate(beginValues, endValues, borderVal);
 }
 } // namespace Detail
 
+//! A field configuration in nPhi field dimensions on a uniformly spaced grid
+//! in \f$r\f$ space.
 template <std::size_t nPhi> class FieldConfiguration {
   public:
-    // maximal grid size
+    //! maximal grid size
     static constexpr std::size_t maxN = 1000;
 
   private:
@@ -155,24 +209,31 @@ template <std::size_t nPhi> class FieldConfiguration {
     }
 
   public:
-    auto begin() const noexcept { return phi_.begin(); }
-    auto end() const noexcept { return phi_.end(); }
+    //! access the field values at grid index i
     std::array<double, nPhi> &operator[](std::size_t i) noexcept {
         return phi_[i];
     }
+    //! access the field values at grid index i
     const std::array<double, nPhi> &operator[](std::size_t i) const noexcept {
         return phi_[i];
     }
+    //! field values of the false vacuum
     const std::array<double, nPhi> &phiFV() const noexcept {
         return phi_.back();
     }
+    //! begin iterator through the grid points
+    auto begin() const noexcept { return phi_.begin(); }
+    //! end iterator through the grid points
+    auto end() const noexcept { return phi_.end(); }
 
+    //! Construct a field configuration from an initial bounce configuration.
     FieldConfiguration(
         const Detail::InitialBounceConfiguration<nPhi> &initBounce,
-        std::size_t dim, double rMax)
+        std::size_t dim, double rMax, std::size_t minGridSize)
         : dim_{dim}, rMax_{rMax}, phi_{initBounce.onGrid(
                                       determineGridSize(initBounce))} {}
 
+    //! Reset to a different initial bounce configuration.
     void resetInitialBounce(
         const Detail::InitialBounceConfiguration<nPhi> &initBounce) {
         auto n{determineGridSize(initBounce)};
@@ -184,13 +245,14 @@ template <std::size_t nPhi> class FieldConfiguration {
         initBounce.onGrid(phi_);
     }
 
-    // return the dimension of space
+    //! The dimension of euclidan space associated with this field configuration
     std::size_t dim() const noexcept { return dim_; }
 
     //! The grid spacing
     double dr() const noexcept { return dr_; }
 
-    //! The values of \f$ r^{dim - 1} \f$ on the grid.
+    //! The values of \f$ r^{dim - 1} \f$ on the grid. This function exists only
+    //! to speed up computation since these values are frequently needed.
     const std::vector<double> &rToDimMin1() const noexcept {
         return rToDimMin1_;
     }
@@ -225,6 +287,8 @@ template <std::size_t nPhi> class FieldConfiguration {
         return result;
     }
 
+    //! Compute the gradient \f$d V(\vec\phi)/d\phi_i\f$ of the scalar potential
+    //! of the model at every grid point.
     template <class Model>
     std::vector<std::array<double, nPhi>> dVdphi(const Model &model) const
         noexcept(noexcept(model.calcDvdphi(std::declval<double *>(),
@@ -238,12 +302,12 @@ template <std::size_t nPhi> class FieldConfiguration {
         return result;
     }
 
-    // field excursion from the origin to the infinity
+    //! Total field excursion from \f$r=0\f$ to \f$r=R\f$.
     double fieldExcursion() const noexcept {
         return Detail::normDifference(phi_.back(), phi_.front());
     }
 
-    // derivative of scalar field at boundary
+    //! Norm of the derivative of scalar field at boundary.
     double derivativeAtBoundary() const noexcept {
         return Detail::normDifference(phi_.back(), *(phi_.end() - 2)) / dr_;
     }
@@ -265,7 +329,7 @@ double kineticEnergy(const FieldConfiguration<nPhi> &field) noexcept {
                                         field.dr());
 }
 
-//! Potential energy of the field configuration.
+//! Potential energy of the field configuration in the given model.
 //! \f$ \int_0^\infty dr r^{d-1} V(\phi) \f$
 template <class Model>
 double potentialEnergy(
@@ -284,6 +348,9 @@ double potentialEnergy(
 
 namespace Detail {
 
+//! Implements the initial bounce configuration as defined in Eq (11). This
+//! class allows adjusting the initial configuration without having to construct
+//! the whole grid of a FieldConfiguration.
 template <std::size_t nPhi> class InitialBounceConfiguration {
     std::array<double, nPhi> phiFV_;
     std::array<double, nPhi> phiTV_;
@@ -295,11 +362,16 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
     static constexpr double almost1 = 1 - almost0;
 
   public:
+    //! Construct an initial configuration between phiFV and phiTV according to
+    //! Eq (11).
     InitialBounceConfiguration(const std::array<double, nPhi> &phiFV,
                                const std::array<double, nPhi> &phiTV,
                                double width, double r0byR) noexcept
         : phiFV_{phiFV}, phiTV_{phiTV}, width_{width}, r0byR_{r0byR} {}
 
+    //! Value of the field configuration at the given value of \f$r/R\f$. By
+    //! construction, the false vacuum is reached as rbyR->1 and the true vacuum
+    //! as rbyR->0.
     std::array<double, nPhi> phi(double rbyR) const noexcept {
         if (rbyR > almost1) {
             return phiFV_;
@@ -318,12 +390,14 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
         return res;
     }
 
+    //! Construct a grid of \f$n\f$ evenly spaced points of phi in rbyR.
     std::vector<std::array<double, nPhi>> onGrid(std::size_t n) const noexcept {
         auto phiGrid{std::vector<std::array<double, nPhi>>(n)};
         onGrid(phiGrid);
         return phiGrid;
     }
 
+    //! Fill the given grid with evenly spaced points of phi in rbyR.
     void onGrid(std::vector<std::array<double, nPhi>> &grid) const noexcept {
         const auto n{grid.size()};
         grid.front() = phiTV_;
@@ -334,9 +408,9 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
         grid.back() = phiFV_;
     }
 
-    double width() const noexcept { return width_; }
-    double &width() noexcept { return width_; }
-    double &r0byR() noexcept { return r0byR_; }
+    double width() const noexcept { return width_; } //!< \f$\sigma/R\f$
+    double &width() noexcept { return width_; }      //!< \f$\sigma/R\f$
+    double &r0byR() noexcept { return r0byR_; }      //!< \f$r_0/R\f$
 
     //! Determine if this initial configuration has a negative potential energy
     //! for this model and dimensionality.
@@ -386,7 +460,7 @@ template <std::size_t nPhi> class InitialBounceConfiguration {
     }
 };
 
-//! Calculate \f$\lambda\f$ according to Eq. (5) of 1908.10868
+//! Calculate \f$\lambda\f$ according to Eq (5).
 template <std::size_t nPhi>
 double computeLambda(const std::vector<std::array<double, nPhi>> &laplacian,
                      const std::vector<std::array<double, nPhi>> &dVdphi,
@@ -411,7 +485,7 @@ double computeLambda(const std::vector<std::array<double, nPhi>> &laplacian,
                                         gridSpacing);
 };
 
-//! Calculate the bracketed part of the RHS of Eq. (10) of 1908.10868.
+//! Calculate the bracketed part of the RHS of Eq (10).
 //! Reuse the memory from laplacian as an optimization.
 template <std::size_t nPhi>
 std::vector<std::array<double, nPhi>>
@@ -427,8 +501,8 @@ computeRhs(std::vector<std::array<double, nPhi>> &&laplacian,
     return std::move(laplacian);
 }
 
-//! Perform a flow step for the field as in Eq. (10) of 1908.10868.
-//! The field value at boundary is fixed to phiFV and will not be updated.
+//! Perform a flow step for the field as in Eq (10) of 1908.10868.
+//! The field value at upper boundary is fixed to phiFV and will not be updated.
 //! If the RHS of the EOM at the origin is too big a smaller step is taken.
 template <std::size_t nPhi>
 void performFlowStep(FieldConfiguration<nPhi> &field, double dTau,
@@ -448,7 +522,7 @@ void performFlowStep(FieldConfiguration<nPhi> &field, double dTau,
 }
 } // namespace Detail
 
-//! Evolve the field configuration by dtau
+//! Evolve the field configuration by dtau as in Eq (10).
 template <class Model>
 void evolve(
     BounceSolution<Model> &solution, double dtau,
@@ -473,7 +547,7 @@ bool evolveUntil(
                                        .calcDvdphi(std::declval<double *>(),
                                                    std::declval<double *>()))) {
 
-    const double tauEnd = params.tend1 * params.rMax * params.rMax;
+    const double tauEnd = params.tau1 * params.rMax * params.rMax;
     // 1 + d + sqrt(1 + d) is maximum of absolute value of eigenvalue of
     // {{-2d, 2d},{ (1-d)/2 + 1, -2}}, which is discreitzed Laplacian
     // for n = 2. This value is 6 for d=3, and 7.23607 for d=4. The
